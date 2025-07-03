@@ -35,23 +35,60 @@ data "aws_caller_identity" "current" {
   provider = aws.us_east_1
 }
 
-# Data source to get current quota information
+# IAM policy for Service Quotas permissions
+resource "aws_iam_policy" "service_quotas_policy" {
+  provider = aws.us_east_1
+  
+  name        = "AFT-ServiceQuotas-Policy-${data.aws_caller_identity.current.account_id}"
+  description = "Allows AFT to manage Service Quotas for automated quota increases"
+  
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "servicequotas:GetServiceQuota",
+          "servicequotas:GetAWSDefaultServiceQuota", 
+          "servicequotas:ListServiceQuotas",
+          "servicequotas:RequestServiceQuotaIncrease",
+          "servicequotas:GetRequestedServiceQuotaChange",
+          "servicequotas:ListRequestedServiceQuotaChangeHistory"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# Attach the policy to the AWSAFTExecution role
+resource "aws_iam_role_policy_attachment" "aft_service_quotas_attachment" {
+  provider = aws.us_east_1
+  
+  role       = "AWSAFTExecution"
+  policy_arn = aws_iam_policy.service_quotas_policy.arn
+}
+
+# Data source to get current quota information (now with proper permissions)
 data "aws_servicequotas_service_quota" "sg_rules_current" {
   provider = aws.us_east_1
   
   service_code = var.quota_service_code
   quota_code   = var.quota_code
+  
+  depends_on = [aws_iam_role_policy_attachment.aft_service_quotas_attachment]
 }
 
 # Security Group rules quota increase request
 # This automatically requests an increase from 60 to 200 rules per security group
-# Note: aws_servicequotas_service_quota resource does not support tags
 resource "aws_servicequotas_service_quota" "sg_rules_quota" {
   provider = aws.us_east_1
   
   service_code = var.quota_service_code
   quota_code   = var.quota_code
   value        = var.target_quota_value
+  
+  depends_on = [aws_iam_role_policy_attachment.aft_service_quotas_attachment]
 }
 
 # Outputs for AFT logging and validation
@@ -80,6 +117,12 @@ output "aft_security_group_quota_info" {
       request_status   = aws_servicequotas_service_quota.sg_rules_quota.request_status
       arn              = aws_servicequotas_service_quota.sg_rules_quota.arn
     }
+    
+    iam_policy = {
+      policy_name = aws_iam_policy.service_quotas_policy.name
+      policy_arn  = aws_iam_policy.service_quotas_policy.arn
+      attached_to = "AWSAFTExecution"
+    }
   }
 }
 
@@ -95,7 +138,7 @@ output "aft_next_steps" {
 }
 
 output "aft_quota_automation_metadata" {
-  description = "Metadata for quota automation tracking (since resource doesn't support tags)"
+  description = "Metadata for quota automation tracking"
   value = {
     name        = "Security-Group-Rules-Quota-${data.aws_caller_identity.current.account_id}"
     description = "Automated quota increase for Security Group rules per SG"
@@ -104,5 +147,10 @@ output "aft_quota_automation_metadata" {
     environment  = "production"
     timestamp    = var.aft_timestamp
     automation   = "aft-security-group-quota"
+    service_code = var.quota_service_code
+    quota_code   = var.quota_code
+    target_value = var.target_quota_value
+    current_quota_value = data.aws_servicequotas_service_quota.sg_rules_current.value
+    permissions_granted = "servicequotas:* via ${aws_iam_policy.service_quotas_policy.name}"
   }
 }
