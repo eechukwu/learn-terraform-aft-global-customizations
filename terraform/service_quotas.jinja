@@ -14,16 +14,15 @@ terraform {
 
 # Default provider (account's primary region)
 provider "aws" {
-  region = "{{ account.region | default('eu-west-2') }}"
+  region = "{{ provider_region | default('eu-west-2') }}"
   
   default_tags {
     tags = {
       Project     = "AFT-Security-Group-Quota-Automation"
-      Environment = "{{ account.environment | default('production') }}"
+      Environment = "production"
       ManagedBy   = "AFT-Global-Customizations"
       Purpose     = "Security-Group-Quota-Automation"
-      AccountId   = "{{ account.id }}"
-      AccountName = "{{ account.name | default('Unknown') }}"
+      Timestamp   = "{{ timestamp }}"
     }
   }
 }
@@ -37,13 +36,25 @@ provider "aws" {
   default_tags {
     tags = {
       Project     = "AFT-Security-Group-Quota-Automation"
-      Environment = "{{ account.environment | default('production') }}"
+      Environment = "production"
       ManagedBy   = "AFT-Global-Customizations"
       Purpose     = "Security-Group-Quota-Automation"
-      AccountId   = "{{ account.id }}"
-      AccountName = "{{ account.name | default('Unknown') }}"
+      Timestamp   = "{{ timestamp }}"
     }
   }
+}
+
+# Data source to get current caller identity (account ID)
+data "aws_caller_identity" "current" {
+  provider = aws.us_east_1
+}
+
+# Data source to get current quota information
+data "aws_servicequotas_service_quota" "sg_rules_current" {
+  provider = aws.us_east_1
+  
+  service_code = var.quota_service_code
+  quota_code   = var.quota_code
 }
 
 # Security Group rules quota increase request
@@ -51,17 +62,17 @@ provider "aws" {
 resource "aws_servicequotas_service_quota" "sg_rules_quota" {
   provider = aws.us_east_1
   
-  service_code = "{{ quota_config.service_code | default('vpc') }}"
-  quota_code   = "{{ quota_config.quota_code | default('L-0EA8095F') }}"
-  value        = {{ quota_config.target_value | default(200) }}
+  service_code = var.quota_service_code
+  quota_code   = var.quota_code
+  value        = var.target_quota_value
   
   tags = {
-    Name        = "Security-Group-Rules-Quota-{{ account.id }}"
+    Name        = "Security-Group-Rules-Quota-${data.aws_caller_identity.current.account_id}"
     Description = "Automated quota increase for Security Group rules per SG"
     RequestedBy = "AFT-Global-Customizations"
-    AccountId   = "{{ account.id }}"
-    AccountName = "{{ account.name | default('Unknown') }}"
-    Environment = "{{ account.environment | default('production') }}"
+    AccountId   = data.aws_caller_identity.current.account_id
+    Environment = "production"
+    Timestamp   = var.aft_timestamp
   }
 }
 
@@ -69,9 +80,8 @@ resource "aws_servicequotas_service_quota" "sg_rules_quota" {
 output "aft_security_group_quota_info" {
   description = "Security Group quota automation results"
   value = {
-    account_id       = "{{ account.id }}"
-    account_name     = "{{ account.name | default('Unknown') }}"
-    primary_region   = "{{ account.region | default('eu-west-2') }}"
+    account_id       = data.aws_caller_identity.current.account_id
+    primary_region   = var.account_region
     quota_region     = "us-east-1"
     
     current_quota = {
