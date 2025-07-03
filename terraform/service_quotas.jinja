@@ -12,23 +12,9 @@ terraform {
   }
 }
 
-# Default provider (account's primary region)
-provider "aws" {
-  region = "{{ provider_region | default('eu-west-2') }}"
-  
-  default_tags {
-    tags = {
-      Project     = "AFT-Security-Group-Quota-Automation"
-      Environment = "production"
-      ManagedBy   = "AFT-Global-Customizations"
-      Purpose     = "Security-Group-Quota-Automation"
-      Timestamp   = "{{ timestamp }}"
-    }
-  }
-}
-
 # US-East-1 provider alias (required for global Security Group quotas)
 # This MUST be us-east-1 regardless of account's primary region
+# Note: AFT already provides default provider, so we only need the alias
 provider "aws" {
   alias  = "us_east_1"
   region = "us-east-1"
