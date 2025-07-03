@@ -35,60 +35,15 @@ data "aws_caller_identity" "current" {
   provider = aws.us_east_1
 }
 
-# IAM policy for Service Quotas permissions
-resource "aws_iam_policy" "service_quotas_policy" {
-  provider = aws.us_east_1
-  
-  name        = "AFT-ServiceQuotas-Policy-${data.aws_caller_identity.current.account_id}"
-  description = "Allows AFT to manage Service Quotas for automated quota increases"
-  
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "servicequotas:GetServiceQuota",
-          "servicequotas:GetAWSDefaultServiceQuota", 
-          "servicequotas:ListServiceQuotas",
-          "servicequotas:RequestServiceQuotaIncrease",
-          "servicequotas:GetRequestedServiceQuotaChange",
-          "servicequotas:ListRequestedServiceQuotaChangeHistory"
-        ]
-        Resource = "*"
-      }
-    ]
-  })
-}
-
-# Attach the policy to the AWSAFTExecution role
-resource "aws_iam_role_policy_attachment" "aft_service_quotas_attachment" {
-  provider = aws.us_east_1
-  
-  role       = "AWSAFTExecution"
-  policy_arn = aws_iam_policy.service_quotas_policy.arn
-}
-
-# Data source to get current quota information (now with proper permissions)
-data "aws_servicequotas_service_quota" "sg_rules_current" {
-  provider = aws.us_east_1
-  
-  service_code = var.quota_service_code
-  quota_code   = var.quota_code
-  
-  depends_on = [aws_iam_role_policy_attachment.aft_service_quotas_attachment]
-}
-
 # Security Group rules quota increase request
 # This automatically requests an increase from 60 to 200 rules per security group
+# Note: Requires ServiceQuotas permissions to be granted to AWSAFTExecution role manually
 resource "aws_servicequotas_service_quota" "sg_rules_quota" {
   provider = aws.us_east_1
   
   service_code = var.quota_service_code
   quota_code   = var.quota_code
   value        = var.target_quota_value
-  
-  depends_on = [aws_iam_role_policy_attachment.aft_service_quotas_attachment]
 }
 
 # Outputs for AFT logging and validation
@@ -100,15 +55,6 @@ output "aft_security_group_quota_info" {
     quota_region     = "us-east-1"
     timestamp        = var.aft_timestamp
     
-    current_quota = {
-      service_code    = data.aws_servicequotas_service_quota.sg_rules_current.service_code
-      quota_code      = data.aws_servicequotas_service_quota.sg_rules_current.quota_code
-      quota_name      = data.aws_servicequotas_service_quota.sg_rules_current.quota_name
-      current_value   = data.aws_servicequotas_service_quota.sg_rules_current.value
-      default_value   = data.aws_servicequotas_service_quota.sg_rules_current.default_value
-      adjustable      = data.aws_servicequotas_service_quota.sg_rules_current.adjustable
-    }
-    
     quota_request = {
       service_code     = aws_servicequotas_service_quota.sg_rules_quota.service_code
       quota_code       = aws_servicequotas_service_quota.sg_rules_quota.quota_code
@@ -116,12 +62,6 @@ output "aft_security_group_quota_info" {
       request_id       = aws_servicequotas_service_quota.sg_rules_quota.id
       request_status   = aws_servicequotas_service_quota.sg_rules_quota.request_status
       arn              = aws_servicequotas_service_quota.sg_rules_quota.arn
-    }
-    
-    iam_policy = {
-      policy_name = aws_iam_policy.service_quotas_policy.name
-      policy_arn  = aws_iam_policy.service_quotas_policy.arn
-      attached_to = "AWSAFTExecution"
     }
   }
 }
@@ -150,7 +90,37 @@ output "aft_quota_automation_metadata" {
     service_code = var.quota_service_code
     quota_code   = var.quota_code
     target_value = var.target_quota_value
-    current_quota_value = data.aws_servicequotas_service_quota.sg_rules_current.value
-    permissions_granted = "servicequotas:* via ${aws_iam_policy.service_quotas_policy.name}"
+    note         = "ServiceQuotas permissions required for AWSAFTExecution role"
+  }
+}
+
+# Output instructions for manual IAM setup
+output "aft_required_permissions" {
+  description = "Required IAM permissions that need to be added manually"
+  value = {
+    role_name = "AWSAFTExecution"
+    required_policy = {
+      Version = "2012-10-17"
+      Statement = [
+        {
+          Effect = "Allow"
+          Action = [
+            "servicequotas:GetServiceQuota",
+            "servicequotas:GetAWSDefaultServiceQuota", 
+            "servicequotas:ListServiceQuotas",
+            "servicequotas:RequestServiceQuotaIncrease",
+            "servicequotas:GetRequestedServiceQuotaChange",
+            "servicequotas:ListRequestedServiceQuotaChangeHistory"
+          ]
+          Resource = "*"
+        }
+      ]
+    }
+    instructions = [
+      "1. Manually attach ServiceQuotas permissions to AWSAFTExecution role",
+      "2. Use the policy JSON provided in required_policy output",
+      "3. This enables quota automation to read current quotas and submit requests",
+      "4. Without these permissions, only quota requests will work (no current quota info)"
+    ]
   }
 }
