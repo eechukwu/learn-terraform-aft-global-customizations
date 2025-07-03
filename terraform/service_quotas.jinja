@@ -45,21 +45,13 @@ data "aws_servicequotas_service_quota" "sg_rules_current" {
 
 # Security Group rules quota increase request
 # This automatically requests an increase from 60 to 200 rules per security group
+# Note: aws_servicequotas_service_quota resource does not support tags
 resource "aws_servicequotas_service_quota" "sg_rules_quota" {
   provider = aws.us_east_1
   
   service_code = var.quota_service_code
   quota_code   = var.quota_code
   value        = var.target_quota_value
-  
-  tags = {
-    Name        = "Security-Group-Rules-Quota-${data.aws_caller_identity.current.account_id}"
-    Description = "Automated quota increase for Security Group rules per SG"
-    RequestedBy = "AFT-Global-Customizations"
-    AccountId   = data.aws_caller_identity.current.account_id
-    Environment = "production"
-    Timestamp   = var.aft_timestamp
-  }
 }
 
 # Outputs for AFT logging and validation
@@ -69,6 +61,7 @@ output "aft_security_group_quota_info" {
     account_id       = data.aws_caller_identity.current.account_id
     primary_region   = var.account_region
     quota_region     = "us-east-1"
+    timestamp        = var.aft_timestamp
     
     current_quota = {
       service_code    = data.aws_servicequotas_service_quota.sg_rules_current.service_code
@@ -99,4 +92,17 @@ output "aft_next_steps" {
     "4. Re-run AFT pipeline to check updated status",
     "5. Quota will be automatically applied upon AWS approval"
   ]
+}
+
+output "aft_quota_automation_metadata" {
+  description = "Metadata for quota automation tracking (since resource doesn't support tags)"
+  value = {
+    name        = "Security-Group-Rules-Quota-${data.aws_caller_identity.current.account_id}"
+    description = "Automated quota increase for Security Group rules per SG"
+    requested_by = "AFT-Global-Customizations"
+    account_id   = data.aws_caller_identity.current.account_id
+    environment  = "production"
+    timestamp    = var.aft_timestamp
+    automation   = "aft-security-group-quota"
+  }
 }
