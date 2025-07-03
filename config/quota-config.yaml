@@ -1,0 +1,67 @@
+# quota-config.yaml - AFT Global Customizations configuration
+# This file defines the quota automation behavior across all accounts
+
+# Security Group quota configuration
+quota_config:
+  # Core quota settings - DO NOT CHANGE without testing
+  service_code: "vpc"              # AWS service for Security Group quotas
+  quota_code: "L-0EA8095F"         # AWS quota code for SG rules per SG
+  current_default: 60              # AWS default quota value
+  target_value: 200                # Desired quota value for organization
+  
+  # Feature control
+  enabled: true                    # Enable quota automation for all accounts
+  
+  # Business justification
+  reason: |
+    Automated quota increase for Security Group rules to support operational requirements.
+    
+    Business justification:
+    - Applications require complex network security configurations
+    - Microservices architecture demands granular security group rules
+    - Compliance requirements necessitate detailed network segmentation
+    - Default limit of 60 rules per security group is insufficient for operational needs
+    
+    Technical justification:
+    - Requesting increase from 60 to 200 rules per security group
+    - Will remain within AWS architectural limits (1000 rules per ENI)
+    - Supports scalable security architecture patterns
+    - Reduces operational overhead of manual quota requests
+    
+    This automated request is part of the Account Factory for Terraform (AFT) 
+    account provisioning process to ensure consistent security capabilities 
+    across all managed AWS accounts.
+
+# Account-specific overrides (optional)
+account_overrides:
+  # Example: Different quota for specific accounts
+  # "123456789012":
+  #   target_value: 150
+  #   reason: "Reduced requirement for this account type"
+  
+  # Example: Disable for specific accounts
+  # "987654321098":
+  #   enabled: false
+  
+  # Example: Custom quota for development accounts
+  # "555666777888":
+  #   target_value: 100
+  #   reason: "Development account with lower requirements"
+
+# Regional configuration
+regions:
+  # Security Group quotas are global but must be requested in us-east-1
+  quota_region: "us-east-1"
+  
+  # Default primary region for accounts (can be overridden per account)
+  default_primary: "eu-west-2"  # London
+  
+  # Supported regions for account provisioning
+  supported:
+    - "us-east-1"      # N. Virginia
+    - "us-west-2"      # Oregon  
+    - "eu-west-1"      # Ireland
+    - "eu-west-2"      # London
+    - "eu-central-1"   # Frankfurt
+    - "ap-southeast-1" # Singapore
+    - "ap-southeast-2" # Sydney
