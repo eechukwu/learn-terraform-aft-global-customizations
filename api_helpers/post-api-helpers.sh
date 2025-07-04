@@ -1,257 +1,277 @@
 #!/bin/bash
-# post-api-helpers.sh - AFT post-deployment validation for Security Group quota automation
-# This script runs after Terraform apply to validate quota requests were submitted successfully
+# Multi-Region Security Group Quota Automation - Post-API Validation Script
+# This script validates quota requests across multiple AWS regions
 
-set -euo pipefail
+set -e
 
 # Configuration
-SERVICE_CODE="vpc"
+SCRIPT_NAME="AFT Multi-Region Quota Validation"
+TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+QUOTA_SERVICE_CODE="vpc"
 QUOTA_CODE="L-0EA8095F"
-REGION="us-east-1"  # Must be us-east-1 for global quotas
-TARGET_QUOTA=200
+TARGET_QUOTA_VALUE=200
+VALIDATION_REPORT="/tmp/aft-multiregion-quota-validation-report.json"
 
-# Colors for output (if terminal supports it)
-if [[ -t 1 ]]; then
-    RED='\033[0;31m'
-    GREEN='\033[0;32m'
-    YELLOW='\033[1;33m'
-    BLUE='\033[0;34m'
-    NC='\033[0m'
-else
-    RED=''
-    GREEN=''
-    YELLOW=''
-    BLUE=''
-    NC=''
-fi
+# Default regions to check (can be overridden)
+DEFAULT_REGIONS=("us-east-1" "eu-west-2" "ap-southeast-1")
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
 
 # Logging functions
 log_info() {
-    echo -e "${BLUE}[INFO]${NC} $1" | tee -a /tmp/aft-quota-validation.log
+    echo -e "${BLUE}[INFO]${NC} $1"
 }
 
 log_success() {
-    echo -e "${GREEN}[SUCCESS]${NC} $1" | tee -a /tmp/aft-quota-validation.log
+    echo -e "${GREEN}[SUCCESS]${NC} $1"
 }
 
 log_warning() {
-    echo -e "${YELLOW}[WARNING]${NC} $1" | tee -a /tmp/aft-quota-validation.log
+    echo -e "${YELLOW}[WARNING]${NC} $1"
 }
 
 log_error() {
-    echo -e "${RED}[ERROR]${NC} $1" | tee -a /tmp/aft-quota-validation.log
+    echo -e "${RED}[ERROR]${NC} $1"
 }
 
 # Function to get account information
 get_account_info() {
-    local account_id=""
-    local account_arn=""
+    local region=$1
+    local account_info
     
-    if aws sts get-caller-identity &>/dev/null; then
-        account_id=$(aws sts get-caller-identity --query Account --output text 2>/dev/null || echo "Unknown")
-        account_arn=$(aws sts get-caller-identity --query Arn --output text 2>/dev/null || echo "Unknown")
-    fi
-    
-    log_info "Account ID: $account_id"
-    log_info "Account ARN: $account_arn"
-    
-    echo "$account_id"
-}
-
-# Function to validate quota request was submitted
-validate_quota_request() {
-    log_info "Validating Security Group quota request submission..."
-    
-    # Get current quota information
-    local quota_info
-    quota_info=$(aws service-quotas get-service-quota \
-        --service-code "$SERVICE_CODE" \
-        --quota-code "$QUOTA_CODE" \
-        --region "$REGION" \
-        --output json 2>/dev/null || echo "ERROR")
-    
-    if [[ "$quota_info" == "ERROR" ]]; then
-        log_error "Failed to retrieve current quota information"
-        return 1
-    fi
-    
-    local current_value
-    current_value=$(echo "$quota_info" | jq -r '.Quota.Value' 2>/dev/null || echo "0")
-    
-    log_info "Current quota value: $current_value"
-    
-    # Check for recent quota requests
-    local requests
-    requests=$(aws service-quotas list-requested-service-quota-change-history \
-        --service-code "$SERVICE_CODE" \
-        --region "$REGION" \
-        --output json 2>/dev/null || echo "ERROR")
-    
-    if [[ "$requests" == "ERROR" ]]; then
-        log_error "Failed to retrieve quota request history"
-        return 1
-    fi
-    
-    # Look for recent requests for our quota
-    local recent_requests
-    recent_requests=$(echo "$requests" | jq -r --arg quota_code "$QUOTA_CODE" --arg target "$TARGET_QUOTA" '
-        .RequestedQuotas[] | 
-        select(.QuotaCode == $quota_code and .DesiredValue == ($target | tonumber)) |
-        select(.Created | fromdateiso8601 > (now - 3600)) |  # Within last hour
-        "\(.Id)|\(.Status)|\(.DesiredValue)|\(.Created)"
-    ' 2>/dev/null || echo "")
-    
-    if [[ -n "$recent_requests" ]]; then
-        log_success "Found recent quota request(s):"
-        echo "$recent_requests" | while IFS='|' read -r id status desired created; do
-            if [[ -n "$id" ]]; then
-                log_success "  Request ID: $id"
-                log_success "  Status: $status"  
-                log_success "  Desired Value: $desired"
-                log_success "  Created: $created"
-            fi
-        done
+    if account_info=$(aws sts get-caller-identity --region "$region" 2>/dev/null); then
+        echo "$account_info"
         return 0
     else
-        # Check if quota is already at target value
-        if [[ "$current_value" == "$TARGET_QUOTA" ]] || [[ "$current_value" == "${TARGET_QUOTA}.0" ]]; then
-            log_success "Quota is already at target value ($TARGET_QUOTA)"
-            return 0
-        else
-            log_warning "No recent quota requests found and quota is not at target value"
-            log_warning "Expected: $TARGET_QUOTA, Current: $current_value"
-            return 1
-        fi
-    fi
-}
-
-# Function to validate Terraform state
-validate_terraform_state() {
-    log_info "Validating Terraform state for quota resources..."
-    
-    # Check if Terraform state file exists and contains our resources
-    if [[ -f "terraform.tfstate" ]]; then
-        # Check for quota resource in state
-        if grep -q "aws_servicequotas_service_quota" terraform.tfstate 2>/dev/null; then
-            log_success "Terraform state contains quota resource"
-            
-            # Extract resource details if possible
-            local resource_id
-            resource_id=$(jq -r '.resources[] | select(.type=="aws_servicequotas_service_quota") | .instances[0].attributes.id' terraform.tfstate 2>/dev/null || echo "Unknown")
-            
-            if [[ "$resource_id" != "Unknown" && "$resource_id" != "null" ]]; then
-                log_success "Quota resource ID: $resource_id"
-            fi
-            
-            return 0
-        else
-            log_warning "Terraform state does not contain expected quota resource"
-            return 1
-        fi
-    else
-        log_warning "Terraform state file not found"
+        log_error "Failed to get account information for region $region"
         return 1
     fi
 }
 
-# Function to generate validation report
-generate_report() {
-    local account_id="$1"
-    local validation_status="$2"
+# Function to validate quota in a specific region
+validate_region_quota() {
+    local region=$1
+    local validation_result="UNKNOWN"
+    local current_quota="N/A"
+    local recent_requests=0
+    local quota_status="UNKNOWN"
     
-    log_info "Generating validation report..."
+    log_info "Validating quota for region: $region"
     
-    cat > /tmp/aft-quota-validation-report.json << REPORT_EOF
-{
-    "timestamp": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-    "account_id": "$account_id",
-    "service_code": "$SERVICE_CODE",
-    "quota_code": "$QUOTA_CODE",
-    "target_quota": $TARGET_QUOTA,
-    "region": "$REGION",
-    "validation_status": "$validation_status",
-    "aft_automation": "security-group-quota",
-    "version": "1.0"
-}
-REPORT_EOF
+    # Get current quota value
+    if current_quota_info=$(aws service-quotas get-service-quota \
+        --service-code "$QUOTA_SERVICE_CODE" \
+        --quota-code "$QUOTA_CODE" \
+        --region "$region" 2>/dev/null); then
+        
+        current_quota=$(echo "$current_quota_info" | jq -r '.Quota.Value')
+        log_info "Current quota in $region: $current_quota"
+        
+        # Check if quota is already at target value
+        if (( $(echo "$current_quota >= $TARGET_QUOTA_VALUE" | bc -l) )); then
+            validation_result="SUCCESS"
+            quota_status="AT_TARGET"
+            log_success "Quota in $region is at target value ($current_quota)"
+        else
+            quota_status="BELOW_TARGET"
+            log_warning "Quota in $region is below target ($current_quota < $TARGET_QUOTA_VALUE)"
+        fi
+    else
+        log_error "Failed to get current quota for region $region"
+        current_quota="ERROR"
+    fi
     
-    log_success "Validation report saved to: /tmp/aft-quota-validation-report.json"
+    # Check for recent quota requests
+    if recent_requests_info=$(aws service-quotas list-requested-service-quota-change-history \
+        --service-code "$QUOTA_SERVICE_CODE" \
+        --region "$region" \
+        --max-results 10 2>/dev/null); then
+        
+        # Count recent requests for our specific quota
+        recent_requests=$(echo "$recent_requests_info" | jq -r \
+            ".RequestedQuotas[] | select(.QuotaCode == \"$QUOTA_CODE\") | .Id" | wc -l)
+        
+        if [ "$recent_requests" -gt 0 ]; then
+            log_info "Found $recent_requests recent quota request(s) for $region"
+            
+            # Get the most recent request status
+            latest_request=$(echo "$recent_requests_info" | jq -r \
+                ".RequestedQuotas[] | select(.QuotaCode == \"$QUOTA_CODE\") | .Status" | head -1)
+            
+            if [ "$latest_request" = "PENDING" ]; then
+                validation_result="PENDING"
+                quota_status="REQUEST_PENDING"
+                log_info "Latest request for $region is PENDING"
+            elif [ "$latest_request" = "APPROVED" ]; then
+                validation_result="SUCCESS"
+                quota_status="REQUEST_APPROVED"
+                log_success "Latest request for $region was APPROVED"
+            elif [ "$latest_request" = "DENIED" ]; then
+                validation_result="FAILED"
+                quota_status="REQUEST_DENIED"
+                log_error "Latest request for $region was DENIED"
+            fi
+        else
+            log_warning "No recent quota requests found for region $region"
+            if [ "$quota_status" = "BELOW_TARGET" ]; then
+                validation_result="MISSING_REQUEST"
+            fi
+        fi
+    else
+        log_error "Failed to get quota request history for region $region"
+    fi
     
-    # Also log the report content
-    log_info "Validation Report:"
-    cat /tmp/aft-quota-validation-report.json | jq '.' 2>/dev/null || cat /tmp/aft-quota-validation-report.json
+    # Store region results
+    region_results["$region"]=$(jq -n \
+        --arg region "$region" \
+        --arg validation_result "$validation_result" \
+        --arg current_quota "$current_quota" \
+        --arg quota_status "$quota_status" \
+        --argjson recent_requests "$recent_requests" \
+        '{
+            region: $region,
+            validation_result: $validation_result,
+            current_quota: $current_quota,
+            quota_status: $quota_status,
+            recent_requests: $recent_requests
+        }')
+    
+    return 0
 }
 
-# Function to handle errors and cleanup
-handle_error() {
-    local exit_code=$?
-    log_error "Validation failed with exit code: $exit_code"
+# Function to generate comprehensive validation report
+generate_validation_report() {
+    local overall_status="UNKNOWN"
+    local successful_regions=0
+    local failed_regions=0
+    local pending_regions=0
+    local total_regions=${#region_results[@]}
     
-    # Don't fail the AFT pipeline - just log the issue
-    log_warning "Continuing AFT pipeline despite validation warnings"
+    log_info "Generating multi-region validation report..."
     
-    # Generate error report
-    generate_report "${account_id:-Unknown}" "FAILED"
+    # Count results by type
+    for region in "${!region_results[@]}"; do
+        result=$(echo "${region_results[$region]}" | jq -r '.validation_result')
+        case "$result" in
+            "SUCCESS")
+                ((successful_regions++))
+                ;;
+            "PENDING")
+                ((pending_regions++))
+                ;;
+            "FAILED"|"MISSING_REQUEST")
+                ((failed_regions++))
+                ;;
+        esac
+    done
     
-    # Exit with success to avoid breaking AFT pipeline
-    exit 0
+    # Determine overall status
+    if [ "$successful_regions" -eq "$total_regions" ]; then
+        overall_status="SUCCESS"
+    elif [ "$failed_regions" -gt 0 ]; then
+        overall_status="FAILED"
+    elif [ "$pending_regions" -gt 0 ]; then
+        overall_status="PENDING"
+    else
+        overall_status="PARTIAL"
+    fi
+    
+    # Get account info
+    account_info=$(get_account_info "${DEFAULT_REGIONS[0]}")
+    account_id=$(echo "$account_info" | jq -r '.Account')
+    account_arn=$(echo "$account_info" | jq -r '.Arn')
+    
+    # Generate JSON report
+    local report_data=$(jq -n \
+        --arg timestamp "$TIMESTAMP" \
+        --arg account_id "$account_id" \
+        --arg account_arn "$account_arn" \
+        --arg service_code "$QUOTA_SERVICE_CODE" \
+        --arg quota_code "$QUOTA_CODE" \
+        --argjson target_quota "$TARGET_QUOTA_VALUE" \
+        --arg overall_status "$overall_status" \
+        --argjson successful_regions "$successful_regions" \
+        --argjson failed_regions "$failed_regions" \
+        --argjson pending_regions "$pending_regions" \
+        --argjson total_regions "$total_regions" \
+        --arg aft_automation "multi-region-security-group-quota" \
+        --arg version "2.0" \
+        '{
+            timestamp: $timestamp,
+            account_id: $account_id,
+            account_arn: $account_arn,
+            service_code: $service_code,
+            quota_code: $quota_code,
+            target_quota: $target_quota,
+            overall_status: $overall_status,
+            region_summary: {
+                successful_regions: $successful_regions,
+                failed_regions: $failed_regions,
+                pending_regions: $pending_regions,
+                total_regions: $total_regions
+            },
+            aft_automation: $aft_automation,
+            version: $version
+        }')
+    
+    # Add regional details
+    local regional_details="[]"
+    for region in "${!region_results[@]}"; do
+        regional_details=$(echo "$regional_details" | jq ". += [${region_results[$region]}]")
+    done
+    
+    report_data=$(echo "$report_data" | jq --argjson regional_details "$regional_details" '. + {regional_details: $regional_details}')
+    
+    # Save report
+    echo "$report_data" > "$VALIDATION_REPORT"
+    log_success "Validation report saved to: $VALIDATION_REPORT"
+    
+    # Display summary
+    log_info "Multi-Region Validation Summary:"
+    log_info "  Total Regions: $total_regions"
+    log_info "  Successful: $successful_regions"
+    log_info "  Pending: $pending_regions"
+    log_info "  Failed: $failed_regions"
+    log_info "  Overall Status: $overall_status"
+    
+    echo "$report_data"
 }
 
 # Main execution
 main() {
-    local account_id
-    local validation_success=true
+    log_info "Starting $SCRIPT_NAME"
+    log_info "Timestamp: $TIMESTAMP"
     
-    # Set up error handling
-    trap handle_error ERR
+    # Initialize associative array for region results
+    declare -A region_results
     
-    log_info "Starting AFT post-API validation for Security Group quota automation"
-    log_info "Timestamp: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-    
-    # Get account information
-    account_id=$(get_account_info)
-    
-    # Validate prerequisites
-    if ! command -v aws &>/dev/null; then
-        log_error "AWS CLI not available"
-        validation_success=false
-    fi
-    
-    if ! command -v jq &>/dev/null; then
-        log_warning "jq not available - some validations will be limited"
-    fi
-    
-    # Validate quota request
-    if ! validate_quota_request; then
-        log_warning "Quota request validation failed"
-        validation_success=false
-    fi
-    
-    # Validate Terraform state
-    if ! validate_terraform_state; then
-        log_warning "Terraform state validation failed"
-        validation_success=false
-    fi
-    
-    # Generate final report
-    if [[ "$validation_success" == true ]]; then
-        log_success "All validations passed successfully"
-        generate_report "$account_id" "SUCCESS"
+    # Get regions to validate (from environment or use defaults)
+    if [ -n "$AFT_TARGET_REGIONS" ]; then
+        IFS=',' read -ra REGIONS <<< "$AFT_TARGET_REGIONS"
     else
-        log_warning "Some validations failed - check logs for details"
-        generate_report "$account_id" "PARTIAL"
+        REGIONS=("${DEFAULT_REGIONS[@]}")
     fi
     
-    log_info "AFT post-API validation completed"
+    log_info "Validating quota automation across ${#REGIONS[@]} regions..."
     
-    # Always exit successfully to avoid breaking AFT pipeline
-    exit 0
+    # Validate each region
+    for region in "${REGIONS[@]}"; do
+        validate_region_quota "$region"
+    done
+    
+    # Generate and display final report
+    validation_report=$(generate_validation_report)
+    
+    log_info "Validation Report:"
+    echo "$validation_report" | jq '.'
+    
+    log_info "$SCRIPT_NAME completed"
 }
 
-# Check if jq is available (optional but helpful)
-if ! command -v jq &>/dev/null; then
-    echo "[WARNING] jq is not installed - some JSON parsing will be limited"
-fi
-
-# Run main function
+# Execute main function
 main "$@"
