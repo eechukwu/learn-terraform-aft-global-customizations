@@ -1,15 +1,5 @@
-# Account-specific variables (populated dynamically)
-variable "account_id" {
-  description = "AWS Account ID being provisioned"
-  type        = string
-  default     = null  # Will be populated via data source
-}
-
-variable "account_region" {
-  description = "Primary AWS region for the account"
-  type        = string
-  default     = "{{ provider_region }}"
-}
+# variables.tf.jinja - Multi-Region AFT Global Customizations variables
+# UPDATED VERSION - Simplified for fixed provider configuration
 
 # Multi-Region Configuration
 variable "target_regions" {
@@ -17,14 +7,23 @@ variable "target_regions" {
   type        = list(string)
   default     = [
     "us-east-1",           # Required for global services
-    "{{ provider_region }}", # Primary region from AFT
-    "eu-west-2",           # Common European region
-    "ap-southeast-1"       # Common Asian region
+    "eu-west-2",           # Primary region from AFT
+    "ap-southeast-1",      # Common Asian region
+    "us-west-2"            # Common US West region
   ]
   
   validation {
     condition     = length(var.target_regions) > 0
     error_message = "At least one target region must be specified."
+  }
+  
+  validation {
+    condition = alltrue([
+      for region in var.target_regions : contains([
+        "us-east-1", "eu-west-2", "ap-southeast-1", "us-west-2"
+      ], region)
+    ])
+    error_message = "All target regions must be from the supported list: us-east-1, eu-west-2, ap-southeast-1, us-west-2."
   }
 }
 
@@ -32,37 +31,6 @@ variable "enable_quota_automation" {
   description = "Enable automatic Security Group quota requests"
   type        = bool
   default     = true
-}
-
-variable "regional_quota_settings" {
-  description = "Per-region quota configuration settings"
-  type = map(object({
-    enabled       = bool
-    target_value  = number
-    priority      = string
-  }))
-  default = {
-    "us-east-1" = {
-      enabled       = true
-      target_value  = 200
-      priority      = "high"
-    }
-    "eu-west-2" = {
-      enabled       = true
-      target_value  = 200
-      priority      = "high"
-    }
-    "us-west-2" = {
-      enabled       = true
-      target_value  = 200
-      priority      = "medium"
-    }
-    "ap-southeast-1" = {
-      enabled       = true
-      target_value  = 200
-      priority      = "medium"
-    }
-  }
 }
 
 # Quota configuration variables
@@ -95,7 +63,7 @@ variable "default_current_quota_value" {
 }
 
 variable "default_target_quota_value" {
-  description = "Default target Security Group rules quota"
+  description = "Target Security Group rules quota"
   type        = number
   default     = 200
   
@@ -105,28 +73,10 @@ variable "default_target_quota_value" {
   }
 }
 
-# Regional Processing Configuration
-variable "enable_regional_validation" {
-  description = "Enable validation checks for each target region"
-  type        = bool
-  default     = true
-}
-
 variable "quota_request_reason" {
   description = "Business justification for quota increase request"
   type        = string
   default     = "Multi-region automated quota increase for Security Group rules to support operational requirements. Increasing from default 60 to 200 rules per security group to accommodate application security requirements across multiple AWS regions."
-}
-
-variable "regional_deployment_strategy" {
-  description = "Strategy for deploying quotas across regions"
-  type        = string
-  default     = "parallel"
-  
-  validation {
-    condition     = contains(["parallel", "sequential"], var.regional_deployment_strategy)
-    error_message = "Regional deployment strategy must be either 'parallel' or 'sequential'."
-  }
 }
 
 # AFT Integration Variables
@@ -142,7 +92,14 @@ variable "aft_account_request_id" {
   default     = "{{ timestamp }}"
 }
 
-# Advanced Configuration
+# Account-specific variables (populated dynamically)
+variable "account_region" {
+  description = "Primary AWS region for the account"
+  type        = string
+  default     = "{{ provider_region }}"
+}
+
+# Monitoring Configuration
 variable "enable_quota_monitoring" {
   description = "Enable quota usage monitoring and alerts"
   type        = bool

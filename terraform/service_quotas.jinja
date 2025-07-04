@@ -1,5 +1,5 @@
 # service_quotas.jinja - Multi-Region AFT Global Customizations template
-# CLEAN VERSION - Minimal repetition with dynamic resources
+# FIXED VERSION - Resolves Terraform provider configuration error
 
 terraform {
   required_version = ">= 1.0"
@@ -13,30 +13,23 @@ terraform {
 
 # Define locals for cleaner region handling
 locals {
-  # Supported regions (static due to Terraform provider limitations)
+  # Supported regions with their configurations
   supported_regions = {
-    "us-east-1"      = { alias = "us_east_1", enabled = true }
-    "eu-west-2"      = { alias = "eu_west_2", enabled = true }
-    "ap-southeast-1" = { alias = "ap_southeast_1", enabled = true }
-    "us-west-2"      = { alias = "us_west_2", enabled = true }
+    "us-east-1"      = { enabled = true, priority = "high" }
+    "eu-west-2"      = { enabled = true, priority = "high" }
+    "ap-southeast-1" = { enabled = true, priority = "medium" }
+    "us-west-2"      = { enabled = true, priority = "medium" }
   }
   
-  # Active regions (intersection of target_regions and supported_regions)
+  # Active regions based on target_regions variable
   active_regions = {
-    for region, config in local.supported_regions : region => config
-    if contains(var.target_regions, region) && lookup(var.regional_quota_settings, region, { enabled = true }).enabled
-  }
-  
-  # Region-specific quota configurations
-  regional_quotas = {
-    for region in keys(local.active_regions) : region => {
-      target_value = lookup(var.regional_quota_settings, region, { target_value = var.default_target_quota_value }).target_value
-      priority     = lookup(var.regional_quota_settings, region, { priority = "medium" }).priority
-    }
+    for region in var.target_regions : region => local.supported_regions[region]
+    if contains(keys(local.supported_regions), region) && 
+       lookup(local.supported_regions, region, { enabled = true }).enabled
   }
 }
 
-# Static regional providers (required due to Terraform limitations)
+# Static regional providers (required - no dynamic provider references allowed)
 provider "aws" {
   alias  = "us_east_1"
   region = "us-east-1"
@@ -52,7 +45,7 @@ provider "aws" {
       ManagedBy              = "AFT-Global-Customizations"
       Purpose                 = "Multi-Region-Security-Group-Quota-Automation"
       Region                 = "us-east-1"
-      QuotaAutomationVersion = "2.0-multi-region"
+      QuotaAutomationVersion = "2.0-multi-region-fixed"
       Timestamp              = "{{ timestamp }}"
     }
   }
@@ -73,7 +66,7 @@ provider "aws" {
       ManagedBy              = "AFT-Global-Customizations"
       Purpose                 = "Multi-Region-Security-Group-Quota-Automation"
       Region                 = "eu-west-2"
-      QuotaAutomationVersion = "2.0-multi-region"
+      QuotaAutomationVersion = "2.0-multi-region-fixed"
       Timestamp              = "{{ timestamp }}"
     }
   }
@@ -94,7 +87,7 @@ provider "aws" {
       ManagedBy              = "AFT-Global-Customizations"
       Purpose                 = "Multi-Region-Security-Group-Quota-Automation"
       Region                 = "ap-southeast-1"
-      QuotaAutomationVersion = "2.0-multi-region"
+      QuotaAutomationVersion = "2.0-multi-region-fixed"
       Timestamp              = "{{ timestamp }}"
     }
   }
@@ -115,133 +108,308 @@ provider "aws" {
       ManagedBy              = "AFT-Global-Customizations"
       Purpose                 = "Multi-Region-Security-Group-Quota-Automation"
       Region                 = "us-west-2"
-      QuotaAutomationVersion = "2.0-multi-region"
+      QuotaAutomationVersion = "2.0-multi-region-fixed"
       Timestamp              = "{{ timestamp }}"
     }
   }
 }
 
-# Dynamic caller identity data sources for active regions only
-data "aws_caller_identity" "regional" {
-  for_each = local.active_regions
-  provider = aws[each.value.alias]
+# Static caller identity data sources for each region
+data "aws_caller_identity" "us_east_1" {
+  count    = contains(var.target_regions, "us-east-1") ? 1 : 0
+  provider = aws.us_east_1
 }
 
-# Single dynamic resource for all regional quota requests
-resource "null_resource" "regional_quota_requests" {
-  for_each = local.active_regions
+data "aws_caller_identity" "eu_west_2" {
+  count    = contains(var.target_regions, "eu-west-2") ? 1 : 0
+  provider = aws.eu_west_2
+}
+
+data "aws_caller_identity" "ap_southeast_1" {
+  count    = contains(var.target_regions, "ap-southeast-1") ? 1 : 0
+  provider = aws.ap_southeast_1
+}
+
+data "aws_caller_identity" "us_west_2" {
+  count    = contains(var.target_regions, "us-west-2") ? 1 : 0
+  provider = aws.us_west_2
+}
+
+# Regional quota requests - one per region
+resource "null_resource" "quota_request_us_east_1" {
+  count = contains(var.target_regions, "us-east-1") ? 1 : 0
 
   triggers = {
-    account_id    = data.aws_caller_identity.regional[each.key].account_id
-    region        = each.key
-    target_value  = local.regional_quotas[each.key].target_value
+    account_id    = data.aws_caller_identity.us_east_1[0].account_id
+    region        = "us-east-1"
+    target_value  = var.default_target_quota_value
     timestamp     = var.aft_timestamp
     quota_code    = var.quota_code
   }
   
   provisioner "local-exec" {
     command = <<-EOF
-      echo "=== QUOTA REQUEST FOR ${upper(each.key)} ==="
-      echo "Account: ${data.aws_caller_identity.regional[each.key].account_id}"
-      echo "Target Value: ${local.regional_quotas[each.key].target_value}"
-      echo "Priority: ${local.regional_quotas[each.key].priority}"
+      echo "=== QUOTA REQUEST FOR US-EAST-1 ==="
+      echo "Account: ${data.aws_caller_identity.us_east_1[0].account_id}"
+      echo "Target Value: ${var.default_target_quota_value}"
       
       # Assume role for the region
-      ROLE_ARN="arn:aws:iam::${data.aws_caller_identity.regional[each.key].account_id}:role/AWSAFTExecution"
+      ROLE_ARN="arn:aws:iam::${data.aws_caller_identity.us_east_1[0].account_id}:role/AWSAFTExecution"
       TEMP_CREDS=$(aws sts assume-role \
         --role-arn "$ROLE_ARN" \
-        --role-session-name "AFT-QuotaRequest-${each.key}-$(date +%s)" \
+        --role-session-name "AFT-QuotaRequest-us-east-1-$(date +%s)" \
         --output json)
       
       if [ $? -eq 0 ]; then
-        echo "✅ Successfully assumed role for ${each.key}"
+        echo "✅ Successfully assumed role for us-east-1"
         
         # Export credentials
         export AWS_ACCESS_KEY_ID=$(echo $TEMP_CREDS | jq -r '.Credentials.AccessKeyId')
         export AWS_SECRET_ACCESS_KEY=$(echo $TEMP_CREDS | jq -r '.Credentials.SecretAccessKey')
         export AWS_SESSION_TOKEN=$(echo $TEMP_CREDS | jq -r '.Credentials.SessionToken')
         
-        # Verify account context
-        CURRENT_ACCOUNT=$(aws sts get-caller-identity --query 'Account' --output text --region ${each.key})
-        echo "Current account: $CURRENT_ACCOUNT"
-        
-        if [ "$CURRENT_ACCOUNT" = "${data.aws_caller_identity.regional[each.key].account_id}" ]; then
-          echo "✅ Confirmed: Running in correct account for ${each.key}"
+        # Submit quota request
+        echo "Submitting quota request for us-east-1..."
+        if aws service-quotas request-service-quota-increase \
+          --service-code ${var.quota_service_code} \
+          --quota-code ${var.quota_code} \
+          --desired-value ${var.default_target_quota_value} \
+          --region us-east-1 > /tmp/quota-request-us-east-1.json 2>&1; then
           
-          # Submit quota request
-          echo "Submitting quota request for ${each.key}..."
-          if aws service-quotas request-service-quota-increase \
-            --service-code ${var.quota_service_code} \
-            --quota-code ${var.quota_code} \
-            --desired-value ${local.regional_quotas[each.key].target_value} \
-            --region ${each.key} > /tmp/quota-request-${each.key}.json 2>&1; then
-            
-            echo "✅ SUCCESS: Quota request submitted for ${each.key}"
-            echo "Result for ${each.key}:"
-            cat /tmp/quota-request-${each.key}.json
-            
-            # Extract request ID for tracking
-            REQUEST_ID=$(jq -r '.RequestedQuota.Id' /tmp/quota-request-${each.key}.json 2>/dev/null || echo "N/A")
-            echo "Request ID for ${each.key}: $REQUEST_ID"
-            
-          else
-            echo "❌ FAILED: Quota request failed for ${each.key}"
-            echo "Error details:"
-            cat /tmp/quota-request-${each.key}.json
-            
-            # Don't exit - continue with other regions
-            echo "⚠️  Continuing with other regions..."
-          fi
+          echo "✅ SUCCESS: Quota request submitted for us-east-1"
+          cat /tmp/quota-request-us-east-1.json
+          
         else
-          echo "❌ ERROR: Wrong account context for ${each.key} ($CURRENT_ACCOUNT)"
-          exit 1
+          echo "❌ FAILED: Quota request failed for us-east-1"
+          cat /tmp/quota-request-us-east-1.json
         fi
       else
-        echo "❌ ERROR: Failed to assume role for ${each.key}"
+        echo "❌ ERROR: Failed to assume role for us-east-1"
         exit 1
       fi
     EOF
   }
 }
 
-# Outputs with dynamic content
+resource "null_resource" "quota_request_eu_west_2" {
+  count = contains(var.target_regions, "eu-west-2") ? 1 : 0
+
+  triggers = {
+    account_id    = data.aws_caller_identity.eu_west_2[0].account_id
+    region        = "eu-west-2"
+    target_value  = var.default_target_quota_value
+    timestamp     = var.aft_timestamp
+    quota_code    = var.quota_code
+  }
+  
+  provisioner "local-exec" {
+    command = <<-EOF
+      echo "=== QUOTA REQUEST FOR EU-WEST-2 ==="
+      echo "Account: ${data.aws_caller_identity.eu_west_2[0].account_id}"
+      echo "Target Value: ${var.default_target_quota_value}"
+      
+      # Assume role for the region
+      ROLE_ARN="arn:aws:iam::${data.aws_caller_identity.eu_west_2[0].account_id}:role/AWSAFTExecution"
+      TEMP_CREDS=$(aws sts assume-role \
+        --role-arn "$ROLE_ARN" \
+        --role-session-name "AFT-QuotaRequest-eu-west-2-$(date +%s)" \
+        --output json)
+      
+      if [ $? -eq 0 ]; then
+        echo "✅ Successfully assumed role for eu-west-2"
+        
+        # Export credentials
+        export AWS_ACCESS_KEY_ID=$(echo $TEMP_CREDS | jq -r '.Credentials.AccessKeyId')
+        export AWS_SECRET_ACCESS_KEY=$(echo $TEMP_CREDS | jq -r '.Credentials.SecretAccessKey')
+        export AWS_SESSION_TOKEN=$(echo $TEMP_CREDS | jq -r '.Credentials.SessionToken')
+        
+        # Submit quota request
+        echo "Submitting quota request for eu-west-2..."
+        if aws service-quotas request-service-quota-increase \
+          --service-code ${var.quota_service_code} \
+          --quota-code ${var.quota_code} \
+          --desired-value ${var.default_target_quota_value} \
+          --region eu-west-2 > /tmp/quota-request-eu-west-2.json 2>&1; then
+          
+          echo "✅ SUCCESS: Quota request submitted for eu-west-2"
+          cat /tmp/quota-request-eu-west-2.json
+          
+        else
+          echo "❌ FAILED: Quota request failed for eu-west-2"
+          cat /tmp/quota-request-eu-west-2.json
+        fi
+      else
+        echo "❌ ERROR: Failed to assume role for eu-west-2"
+        exit 1
+      fi
+    EOF
+  }
+}
+
+resource "null_resource" "quota_request_ap_southeast_1" {
+  count = contains(var.target_regions, "ap-southeast-1") ? 1 : 0
+
+  triggers = {
+    account_id    = data.aws_caller_identity.ap_southeast_1[0].account_id
+    region        = "ap-southeast-1"
+    target_value  = var.default_target_quota_value
+    timestamp     = var.aft_timestamp
+    quota_code    = var.quota_code
+  }
+  
+  provisioner "local-exec" {
+    command = <<-EOF
+      echo "=== QUOTA REQUEST FOR AP-SOUTHEAST-1 ==="
+      echo "Account: ${data.aws_caller_identity.ap_southeast_1[0].account_id}"
+      echo "Target Value: ${var.default_target_quota_value}"
+      
+      # Assume role for the region
+      ROLE_ARN="arn:aws:iam::${data.aws_caller_identity.ap_southeast_1[0].account_id}:role/AWSAFTExecution"
+      TEMP_CREDS=$(aws sts assume-role \
+        --role-arn "$ROLE_ARN" \
+        --role-session-name "AFT-QuotaRequest-ap-southeast-1-$(date +%s)" \
+        --output json)
+      
+      if [ $? -eq 0 ]; then
+        echo "✅ Successfully assumed role for ap-southeast-1"
+        
+        # Export credentials
+        export AWS_ACCESS_KEY_ID=$(echo $TEMP_CREDS | jq -r '.Credentials.AccessKeyId')
+        export AWS_SECRET_ACCESS_KEY=$(echo $TEMP_CREDS | jq -r '.Credentials.SecretAccessKey')
+        export AWS_SESSION_TOKEN=$(echo $TEMP_CREDS | jq -r '.Credentials.SessionToken')
+        
+        # Submit quota request
+        echo "Submitting quota request for ap-southeast-1..."
+        if aws service-quotas request-service-quota-increase \
+          --service-code ${var.quota_service_code} \
+          --quota-code ${var.quota_code} \
+          --desired-value ${var.default_target_quota_value} \
+          --region ap-southeast-1 > /tmp/quota-request-ap-southeast-1.json 2>&1; then
+          
+          echo "✅ SUCCESS: Quota request submitted for ap-southeast-1"
+          cat /tmp/quota-request-ap-southeast-1.json
+          
+        else
+          echo "❌ FAILED: Quota request failed for ap-southeast-1"
+          cat /tmp/quota-request-ap-southeast-1.json
+        fi
+      else
+        echo "❌ ERROR: Failed to assume role for ap-southeast-1"
+        exit 1
+      fi
+    EOF
+  }
+}
+
+resource "null_resource" "quota_request_us_west_2" {
+  count = contains(var.target_regions, "us-west-2") ? 1 : 0
+
+  triggers = {
+    account_id    = data.aws_caller_identity.us_west_2[0].account_id
+    region        = "us-west-2"
+    target_value  = var.default_target_quota_value
+    timestamp     = var.aft_timestamp
+    quota_code    = var.quota_code
+  }
+  
+  provisioner "local-exec" {
+    command = <<-EOF
+      echo "=== QUOTA REQUEST FOR US-WEST-2 ==="
+      echo "Account: ${data.aws_caller_identity.us_west_2[0].account_id}"
+      echo "Target Value: ${var.default_target_quota_value}"
+      
+      # Assume role for the region
+      ROLE_ARN="arn:aws:iam::${data.aws_caller_identity.us_west_2[0].account_id}:role/AWSAFTExecution"
+      TEMP_CREDS=$(aws sts assume-role \
+        --role-arn "$ROLE_ARN" \
+        --role-session-name "AFT-QuotaRequest-us-west-2-$(date +%s)" \
+        --output json)
+      
+      if [ $? -eq 0 ]; then
+        echo "✅ Successfully assumed role for us-west-2"
+        
+        # Export credentials
+        export AWS_ACCESS_KEY_ID=$(echo $TEMP_CREDS | jq -r '.Credentials.AccessKeyId')
+        export AWS_SECRET_ACCESS_KEY=$(echo $TEMP_CREDS | jq -r '.Credentials.SecretAccessKey')
+        export AWS_SESSION_TOKEN=$(echo $TEMP_CREDS | jq -r '.Credentials.SessionToken')
+        
+        # Submit quota request
+        echo "Submitting quota request for us-west-2..."
+        if aws service-quotas request-service-quota-increase \
+          --service-code ${var.quota_service_code} \
+          --quota-code ${var.quota_code} \
+          --desired-value ${var.default_target_quota_value} \
+          --region us-west-2 > /tmp/quota-request-us-west-2.json 2>&1; then
+          
+          echo "✅ SUCCESS: Quota request submitted for us-west-2"
+          cat /tmp/quota-request-us-west-2.json
+          
+        else
+          echo "❌ FAILED: Quota request failed for us-west-2"
+          cat /tmp/quota-request-us-west-2.json
+        fi
+      else
+        echo "❌ ERROR: Failed to assume role for us-west-2"
+        exit 1
+      fi
+    EOF
+  }
+}
+
+# Outputs
 output "multiregion_quota_summary" {
   description = "Multi-region quota automation summary"
   value = {
-    account_id           = try(data.aws_caller_identity.regional[keys(local.active_regions)[0]].account_id, "unknown")
     target_regions       = var.target_regions
-    active_regions       = keys(local.active_regions)
-    regional_quotas      = local.regional_quotas
-    automation_method    = "Multi-region providers with dynamic resources"
+    enabled_regions      = length(var.target_regions)
+    automation_method    = "Multi-region providers with static resources"
     timestamp            = var.aft_timestamp
-    total_active_regions = length(local.active_regions)
+    quota_service_code   = var.quota_service_code
+    quota_code           = var.quota_code
+    target_quota_value   = var.default_target_quota_value
   }
 }
 
 output "regional_quota_details" {
   description = "Per-region quota request details"
   value = {
-    for region in keys(local.active_regions) : region => {
-      account_id       = data.aws_caller_identity.regional[region].account_id
-      region           = region
-      service_code     = var.quota_service_code
-      quota_code       = var.quota_code
-      target_value     = local.regional_quotas[region].target_value
-      priority         = local.regional_quotas[region].priority
-      request_method   = "AWS CLI with cross-account role assumption"
-      timestamp        = var.aft_timestamp
-    }
+    us_east_1 = contains(var.target_regions, "us-east-1") ? {
+      account_id     = data.aws_caller_identity.us_east_1[0].account_id
+      region         = "us-east-1"
+      target_value   = var.default_target_quota_value
+      request_method = "AWS CLI with cross-account role assumption"
+    } : null
+    
+    eu_west_2 = contains(var.target_regions, "eu-west-2") ? {
+      account_id     = data.aws_caller_identity.eu_west_2[0].account_id
+      region         = "eu-west-2"
+      target_value   = var.default_target_quota_value
+      request_method = "AWS CLI with cross-account role assumption"
+    } : null
+    
+    ap_southeast_1 = contains(var.target_regions, "ap-southeast-1") ? {
+      account_id     = data.aws_caller_identity.ap_southeast_1[0].account_id
+      region         = "ap-southeast-1"
+      target_value   = var.default_target_quota_value
+      request_method = "AWS CLI with cross-account role assumption"
+    } : null
+    
+    us_west_2 = contains(var.target_regions, "us-west-2") ? {
+      account_id     = data.aws_caller_identity.us_west_2[0].account_id
+      region         = "us-west-2"
+      target_value   = var.default_target_quota_value
+      request_method = "AWS CLI with cross-account role assumption"
+    } : null
   }
 }
 
 output "aft_next_steps" {
   description = "Next steps for multi-region quota management"
   value = [
-    "1. Check AWS Service Quotas console in each active region:",
-    "   Active regions: ${join(", ", keys(local.active_regions))}",
+    "1. Check AWS Service Quotas console in each target region",
     "2. Look for Service: VPC, Quota: Rules per security group",
     "3. AWS will review and approve/deny requests (1-2 business days per region)",
     "4. Quotas will be automatically applied upon AWS approval",
-    "5. Total regions configured: ${length(local.active_regions)}"
+    "5. Total target regions: ${length(var.target_regions)}"
   ]
 }
