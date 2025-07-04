@@ -18,7 +18,7 @@ provider "aws" {
   
   # Ensure we're in the target account, not management account
   assume_role {
-    role_arn = "arn:aws:iam::{{ vended_account_id }}:role/AWSAFTExecution"
+    role_arn = "{{ target_admin_role_arn }}"
   }
   
   default_tags {
