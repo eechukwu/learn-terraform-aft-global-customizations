@@ -1,71 +1,33 @@
-# variables.tf.jinja - Multi-Region AFT Global Customizations variables
-# UPDATED VERSION - Simplified for fixed provider configuration
+# variables.tf.jinja
 
-# Multi-Region Configuration
 variable "target_regions" {
-  description = "List of AWS regions to apply Security Group quota increases"
-  type        = list(string)
-  default     = [
-    "us-east-1",           # Required for global services
-    "eu-west-2",           # Primary region from AFT
-    "ap-southeast-1",      # Common Asian region
-    "us-west-2"            # Common US West region
-  ]
+  type    = list(string)
+  default = ["us-east-1", "eu-west-2", "ap-southeast-1", "us-west-2"]
   
   validation {
     condition     = length(var.target_regions) > 0
     error_message = "At least one target region must be specified."
   }
-  
-  validation {
-    condition = alltrue([
-      for region in var.target_regions : contains([
-        "us-east-1", "eu-west-2", "ap-southeast-1", "us-west-2"
-      ], region)
-    ])
-    error_message = "All target regions must be from the supported list: us-east-1, eu-west-2, ap-southeast-1, us-west-2."
-  }
 }
 
 variable "enable_quota_automation" {
-  description = "Enable automatic Security Group quota requests"
-  type        = bool
-  default     = true
+  type    = bool
+  default = true
 }
 
-# Quota configuration variables
 variable "quota_service_code" {
-  description = "AWS service code for VPC service quotas"
-  type        = string
-  default     = "vpc"
-  
-  validation {
-    condition     = var.quota_service_code == "vpc"
-    error_message = "Service code must be 'vpc' for Security Group quotas."
-  }
+  type    = string
+  default = "vpc"
 }
 
 variable "quota_code" {
-  description = "Quota code for Security Group rules per security group"
-  type        = string
-  default     = "L-0EA8095F"
-  
-  validation {
-    condition     = var.quota_code == "L-0EA8095F"
-    error_message = "Quota code must be 'L-0EA8095F' for Security Group rules per SG."
-  }
-}
-
-variable "default_current_quota_value" {
-  description = "Current Security Group rules quota (AWS default)"
-  type        = number
-  default     = 60
+  type    = string
+  default = "L-0EA8095F"
 }
 
 variable "default_target_quota_value" {
-  description = "Target Security Group rules quota"
-  type        = number
-  default     = 200
+  type    = number
+  default = 200
   
   validation {
     condition     = var.default_target_quota_value > 60
@@ -73,46 +35,12 @@ variable "default_target_quota_value" {
   }
 }
 
-variable "quota_request_reason" {
-  description = "Business justification for quota increase request"
-  type        = string
-  default     = "Multi-region automated quota increase for Security Group rules to support operational requirements. Increasing from default 60 to 200 rules per security group to accommodate application security requirements across multiple AWS regions."
-}
-
-# AFT Integration Variables
 variable "aft_timestamp" {
-  description = "AFT execution timestamp"
-  type        = string
-  default     = "{{ timestamp }}"
+  type    = string
+  default = "{{ timestamp }}"
 }
 
-variable "aft_account_request_id" {
-  description = "AFT account request identifier"
-  type        = string
-  default     = "{{ timestamp }}"
-}
-
-# Account-specific variables (populated dynamically)
 variable "account_region" {
-  description = "Primary AWS region for the account"
-  type        = string
-  default     = "{{ provider_region }}"
-}
-
-# Monitoring Configuration
-variable "enable_quota_monitoring" {
-  description = "Enable quota usage monitoring and alerts"
-  type        = bool
-  default     = true
-}
-
-variable "quota_utilization_threshold" {
-  description = "Threshold percentage for quota utilization alerts"
-  type        = number
-  default     = 80
-  
-  validation {
-    condition     = var.quota_utilization_threshold > 0 && var.quota_utilization_threshold <= 100
-    error_message = "Quota utilization threshold must be between 1 and 100."
-  }
+  type    = string
+  default = "{{ provider_region }}"
 }
