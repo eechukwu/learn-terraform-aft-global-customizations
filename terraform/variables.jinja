@@ -1,0 +1,38 @@
+variable "target_regions" {
+  description = "Regions to apply the quota increase"
+  type        = list(string)
+  default     = ["us-east-1", "eu-west-2", "ap-southeast-1", "us-west-2"]
+
+  validation {
+    condition = length(var.target_regions) > 0 && alltrue([
+      for r in var.target_regions : contains(
+        ["us-east-1","eu-west-2","ap-southeast-1","us-west-2"], r)
+    ])
+    error_message = "target_regions contains unsupported regions."
+  }
+}
+
+variable "quota_service_code" {
+  type    = string
+  default = "vpc"
+}
+
+variable "quota_code" {
+  type    = string
+  default = "L-0EA8095F"
+}
+
+variable "default_target_quota_value" {
+  type    = number
+  default = 200
+}
+
+variable "enable_quota_automation" {
+  type    = bool
+  default = true
+}
+
+variable "aft_timestamp" {
+  type    = string
+  default = "{{ timestamp }}"
+}
