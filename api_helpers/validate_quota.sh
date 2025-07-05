@@ -8,7 +8,7 @@ QUOTA="L-0EA8095F"
 REGIONS=(us-east-1 eu-west-2 ap-southeast-1)
 GREEN='\e[32m'; RED='\e[31m'; NC='\e[0m'
 
-print_head() { printf "\n%-15s | %-9s | %-5s\n" "Region" "Status" "Value"; }
+print_head() { printf "\n%-15s | %-9s | %-5s\n" "RegionValue" "Status" "Value"; }
 
 validate() {
   local region=$1
