@@ -1,1 +1,10 @@
-<paste locals.tf.jinja here>
+locals {
+  # Central place to list every region you want the quota automation in
+  target_regions = [
+    "us-east-1",
+    "eu-west-2",
+    "ap-southeast-1",
+    "ca-central-1",
+    "us-west-2"
+  ]
+}

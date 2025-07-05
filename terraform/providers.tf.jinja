@@ -1,1 +1,12 @@
-<paste providers.tf.jinja here>
+{# providers.tf.jinja
+   Renders one provider alias block per region in var.target_regions #}
+
+{% for region in var.target_regions %}
+provider "aws" {
+  alias  = "{{ replace(region, "-", "_") }}"
+  region = "{{ region }}"
+  assume_role {
+    role_arn = var.target_admin_role_arn   # <-- already passed in by buildspec
+  }
+}
+{% endfor %}
