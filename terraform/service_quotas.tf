@@ -1,5 +1,5 @@
 # ==========================================
-# service_quotas.tf - Quota management resources
+# service_quotas.tf - Quota management resources code
 # ==========================================
 
 # Service quota resources
