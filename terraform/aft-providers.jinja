@@ -1,13 +1,5 @@
-# aft-providers.jinja
-
 provider "aws" {
-  region = "{{ provider_region }}"
-  assume_role {
-    role_arn = "{{ target_admin_role_arn }}"
-  }
-  default_tags {
-    tags = {
-      managed_by = "AFT"
-    }
-  }
+  region      = "{{ provider_region }}"
+  assume_role { role_arn = "{{ target_admin_role_arn }}" }
+  default_tags { tags = { managed_by = "AFT" } }
 }

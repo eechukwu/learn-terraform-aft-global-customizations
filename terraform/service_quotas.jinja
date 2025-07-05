@@ -1,190 +1,45 @@
-# service_quotas.jinja - AFT multi-region quota automation
-
 terraform {
   required_version = ">= 1.0"
   required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
+    aws = { source = "hashicorp/aws", version = "~> 5.0" }
   }
 }
+
+############################
+# STATIC PROVIDERS
+############################
+provider "aws" { alias = "us_east_1"      region = "us-east-1"      assume_role { role_arn = "{{ target_admin_role_arn }}" } }
+provider "aws" { alias = "eu_west_2"      region = "eu-west-2"      assume_role { role_arn = "{{ target_admin_role_arn }}" } }
+provider "aws" { alias = "ap_southeast_1" region = "ap-southeast-1" assume_role { role_arn = "{{ target_admin_role_arn }}" } }
+provider "aws" { alias = "us_west_2"      region = "us-west-2"      assume_role { role_arn = "{{ target_admin_role_arn }}" } }
 
 locals {
-  supported_regions = {
-    "us-east-1"      = { enabled = true }
-    "eu-west-2"      = { enabled = true }
-    "ap-southeast-1" = { enabled = true }
-    "us-west-2"      = { enabled = true }
+  region_providers = {
+    "us-east-1"      = aws.us_east_1
+    "eu-west-2"      = aws.eu_west_2
+    "ap-southeast-1" = aws.ap_southeast_1
+    "us-west-2"      = aws.us_west_2
   }
 }
 
-# Regional providers
-provider "aws" {
-  alias  = "us_east_1"
-  region = "us-east-1"
-  
-  assume_role {
-    role_arn = "{{ target_admin_role_arn }}"
-  }
-  
-  default_tags {
-    tags = {
-      ManagedBy = "AFT"
-      Purpose   = "quota-automation"
-      Timestamp = "{{ timestamp }}"
-    }
-  }
+resource "aws_servicequotas_service_quota" "sg_rules_increase" {
+  for_each = var.enable_quota_automation ? {
+    for r in var.target_regions : r => local.region_providers[r]
+  } : {}
+
+  provider     = each.value
+  service_code = var.quota_service_code      # "vpc"
+  quota_code   = var.quota_code              # "L-0EA8095F"
+  value        = var.default_target_quota_value
 }
 
-provider "aws" {
-  alias  = "eu_west_2"
-  region = "eu-west-2"
-  
-  assume_role {
-    role_arn = "{{ target_admin_role_arn }}"
-  }
-  
-  default_tags {
-    tags = {
-      ManagedBy = "AFT"
-      Purpose   = "quota-automation"
-      Timestamp = "{{ timestamp }}"
-    }
-  }
+data "aws_servicequotas_service_quota" "live" {
+  for_each     = aws_servicequotas_service_quota.sg_rules_increase
+  provider     = each.value.provider
+  service_code = var.quota_service_code
+  quota_code   = var.quota_code
 }
 
-provider "aws" {
-  alias  = "ap_southeast_1"
-  region = "ap-southeast-1"
-  
-  assume_role {
-    role_arn = "{{ target_admin_role_arn }}"
-  }
-  
-  default_tags {
-    tags = {
-      ManagedBy = "AFT"
-      Purpose   = "quota-automation"
-      Timestamp = "{{ timestamp }}"
-    }
-  }
-}
-
-provider "aws" {
-  alias  = "us_west_2"
-  region = "us-west-2"
-  
-  assume_role {
-    role_arn = "{{ target_admin_role_arn }}"
-  }
-  
-  default_tags {
-    tags = {
-      ManagedBy = "AFT"
-      Purpose   = "quota-automation"
-      Timestamp = "{{ timestamp }}"
-    }
-  }
-}
-
-# Caller identity data sources
-data "aws_caller_identity" "us_east_1" {
-  count    = contains(var.target_regions, "us-east-1") ? 1 : 0
-  provider = aws.us_east_1
-}
-
-data "aws_caller_identity" "eu_west_2" {
-  count    = contains(var.target_regions, "eu-west-2") ? 1 : 0
-  provider = aws.eu_west_2
-}
-
-data "aws_caller_identity" "ap_southeast_1" {
-  count    = contains(var.target_regions, "ap-southeast-1") ? 1 : 0
-  provider = aws.ap_southeast_1
-}
-
-data "aws_caller_identity" "us_west_2" {
-  count    = contains(var.target_regions, "us-west-2") ? 1 : 0
-  provider = aws.us_west_2
-}
-
-# Quota request resources
-resource "null_resource" "quota_request_us_east_1" {
-  count = contains(var.target_regions, "us-east-1") ? 1 : 0
-
-  triggers = {
-    account_id   = data.aws_caller_identity.us_east_1[0].account_id
-    region       = "us-east-1"
-    target_value = var.default_target_quota_value
-    timestamp    = var.aft_timestamp
-  }
-  
-  provisioner "local-exec" {
-    command = <<-EOF
-      echo "Processing quota request for us-east-1"
-      echo "Account: ${data.aws_caller_identity.us_east_1[0].account_id}"
-      
-      ROLE_ARN="arn:aws:iam::${data.aws_caller_identity.us_east_1[0].account_id}:role/AWSAFTExecution"
-      TEMP_CREDS=$(aws sts assume-role \
-        --role-arn "$ROLE_ARN" \
-        --role-session-name "AFT-QuotaRequest-$(date +%s)" \
-        --output json)
-      
-      if [ $? -eq 0 ]; then
-        export AWS_ACCESS_KEY_ID=$(echo $TEMP_CREDS | jq -r '.Credentials.AccessKeyId')
-        export AWS_SECRET_ACCESS_KEY=$(echo $TEMP_CREDS | jq -r '.Credentials.SecretAccessKey')
-        export AWS_SESSION_TOKEN=$(echo $TEMP_CREDS | jq -r '.Credentials.SessionToken')
-        
-        aws service-quotas request-service-quota-increase \
-          --service-code ${var.quota_service_code} \
-          --quota-code ${var.quota_code} \
-          --desired-value ${var.default_target_quota_value} \
-          --region us-east-1 > /tmp/quota-request-us-east-1.json 2>&1
-        
-        if [ $? -eq 0 ]; then
-          echo "Quota request submitted for us-east-1"
-        else
-          echo "Quota request failed for us-east-1"
-          cat /tmp/quota-request-us-east-1.json
-        fi
-      else
-        echo "Failed to assume role for us-east-1"
-        exit 1
-      fi
-    EOF
-  }
-}
-
-# Repeat similar pattern for other regions (condensed for brevity)
-resource "null_resource" "quota_request_eu_west_2" {
-  count = contains(var.target_regions, "eu-west-2") ? 1 : 0
-  # Similar structure as us_east_1
-}
-
-resource "null_resource" "quota_request_ap_southeast_1" {
-  count = contains(var.target_regions, "ap-southeast-1") ? 1 : 0
-  # Similar structure as us_east_1
-}
-
-resource "null_resource" "quota_request_us_west_2" {
-  count = contains(var.target_regions, "us-west-2") ? 1 : 0
-  # Similar structure as us_east_1
-}
-
-output "quota_summary" {
-  value = {
-    regions      = var.target_regions
-    target_quota = var.default_target_quota_value
-    timestamp    = var.aft_timestamp
-  }
-}
-
-output "quota_details" {
-  value = {
-    us_east_1      = contains(var.target_regions, "us-east-1") ? data.aws_caller_identity.us_east_1[0].account_id : null
-    eu_west_2      = contains(var.target_regions, "eu-west-2") ? data.aws_caller_identity.eu_west_2[0].account_id : null
-    ap_southeast_1 = contains(var.target_regions, "ap-southeast-1") ? data.aws_caller_identity.ap_southeast_1[0].account_id : null
-    us_west_2      = contains(var.target_regions, "us-west-2") ? data.aws_caller_identity.us_west_2[0].account_id : null
-  }
+output "security_group_quota_values" {
+  value = { for r, d in data.aws_servicequotas_service_quota.live : r => d.value }
 }
