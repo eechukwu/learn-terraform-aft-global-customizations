@@ -1,10 +1,22 @@
 locals {
-  # Central place to list every region you want the quota automation in
+
+  # canonical list – add/remove regions here **once**
   target_regions = [
     "us-east-1",
     "eu-west-2",
     "ap-southeast-1",
-    "ca-central-1",
-    "us-west-2"
+    "us-west-2",
+    "ca-central-1"      # ← new region
   ]
+
+  # same list, but with hyphens replaced so it matches alias names
+  target_regions_clean = [
+    for r in local.target_regions : replace(r, "-", "_")
+  ]
+
+  # map region  ->  provider reference (aws.<alias>)
+  region_providers = {
+    for r in local.target_regions :
+    r => aws[replace(r, "-", "_")]
+  }
 }

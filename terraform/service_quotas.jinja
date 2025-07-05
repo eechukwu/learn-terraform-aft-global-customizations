@@ -1,0 +1,42 @@
+terraform {
+  required_version = ">= 1.1"
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+############################
+# SINGLE QUOTA RESOURCE
+############################
+resource "aws_servicequotas_service_quota" "sg_rules" {
+  # for_each keys are the *region names*
+  for_each = local.region_providers
+
+  provider     = each.value
+  service_code = var.quota_service_code
+  quota_code   = var.quota_code
+  value        = var.default_target_quota_value
+}
+
+############################
+# MATCHING DATA SOURCE
+############################
+data "aws_servicequotas_service_quota" "live" {
+  for_each     = local.region_providers
+  provider     = each.value
+  service_code = var.quota_service_code
+  quota_code   = var.quota_code
+}
+
+############################
+# OUTPUT
+############################
+output "security_group_quota_values" {
+  value = {
+    for r, _ in local.region_providers :
+    r => data.aws_servicequotas_service_quota.live[r].value
+  }
+}

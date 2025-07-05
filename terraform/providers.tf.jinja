@@ -1,12 +1,14 @@
-{# providers.tf.jinja
-   Renders one provider alias block per region in var.target_regions #}
+{#---
+  Render one aliased provider block for every region in locals.target_regions.
+  Dash ( - ) is illegal in an alias, so we replace with underscore.
+---#}
 
-{% for region in var.target_regions %}
+{% for r in local.target_regions_clean %}
 provider "aws" {
-  alias  = "{{ replace(region, "-", "_") }}"
-  region = "{{ region }}"
+  alias  = "{{ r | replace('-', '_') }}"
+  region = "{{ r }}"
   assume_role {
-    role_arn = var.target_admin_role_arn   # <-- already passed in by buildspec
+    role_arn = "{{ target_admin_role_arn }}"
   }
 }
 {% endfor %}
