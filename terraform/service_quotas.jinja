@@ -1,67 +1,82 @@
 terraform {
   required_version = ">= 1.0"
   required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
+    aws = { source = "hashicorp/aws", version = "~> 5.0" }
   }
 }
 
-########################
-# STATIC PROVIDERS
-########################
-provider "aws" "us_east_1" {
-  alias  = "us_east_1"
-  region = "us-east-1"
-  assume_role { role_arn = "{{ target_admin_role_arn }}" }
-}
-
-provider "aws" "eu_west_2" {
-  alias  = "eu_west_2"
-  region = "eu-west-2"
-  assume_role { role_arn = "{{ target_admin_role_arn }}" }
-}
-
-provider "aws" "ap_southeast_1" {
-  alias  = "ap_southeast_1"
-  region = "ap-southeast-1"
-  assume_role { role_arn = "{{ target_admin_role_arn }}" }
-}
-
-provider "aws" "us_west_2" {
-  alias  = "us_west_2"
-  region = "us-west-2"
-  assume_role { role_arn = "{{ target_admin_role_arn }}" }
-}
-
-locals {
-  region_providers = {
-    "us-east-1"      = aws.us_east_1
-    "eu-west-2"      = aws.eu_west_2
-    "ap-southeast-1" = aws.ap_southeast_1
-    "us-west-2"      = aws.us_west_2
-  }
-}
-
-resource "aws_servicequotas_service_quota" "sg_rules_increase" {
-  for_each = var.enable_quota_automation ? {
-    for r in var.target_regions : r => local.region_providers[r]
-  } : {}
-
-  provider     = each.value
+############################
+# QUOTA REQUESTS (4 blocks)
+############################
+resource "aws_servicequotas_service_quota" "sg_rules_us_east_1" {
+  count        = contains(var.target_regions, "us-east-1") && var.enable_quota_automation ? 1 : 0
+  provider     = aws.us_east_1
   service_code = var.quota_service_code
   quota_code   = var.quota_code
   value        = var.default_target_quota_value
 }
 
-data "aws_servicequotas_service_quota" "live" {
-  for_each     = aws_servicequotas_service_quota.sg_rules_increase
-  provider     = each.value     # fixed: use alias itself
+resource "aws_servicequotas_service_quota" "sg_rules_eu_west_2" {
+  count        = contains(var.target_regions, "eu-west-2") && var.enable_quota_automation ? 1 : 0
+  provider     = aws.eu_west_2
+  service_code = var.quota_service_code
+  quota_code   = var.quota_code
+  value        = var.default_target_quota_value
+}
+
+resource "aws_servicequotas_service_quota" "sg_rules_ap_southeast_1" {
+  count        = contains(var.target_regions, "ap-southeast-1") && var.enable_quota_automation ? 1 : 0
+  provider     = aws.ap_southeast_1
+  service_code = var.quota_service_code
+  quota_code   = var.quota_code
+  value        = var.default_target_quota_value
+}
+
+resource "aws_servicequotas_service_quota" "sg_rules_us_west_2" {
+  count        = contains(var.target_regions, "us-west-2") && var.enable_quota_automation ? 1 : 0
+  provider     = aws.us_west_2
+  service_code = var.quota_service_code
+  quota_code   = var.quota_code
+  value        = var.default_target_quota_value
+}
+
+############################
+# DATA SOURCES FOR OUTPUT
+############################
+data "aws_servicequotas_service_quota" "live_us_east_1" {
+  count        = aws_servicequotas_service_quota.sg_rules_us_east_1.*.id != [] ? 1 : 0
+  provider     = aws.us_east_1
+  service_code = var.quota_service_code
+  quota_code   = var.quota_code
+}
+
+# repeat for other three regions
+data "aws_servicequotas_service_quota" "live_eu_west_2" {
+  count        = aws_servicequotas_service_quota.sg_rules_eu_west_2.*.id != [] ? 1 : 0
+  provider     = aws.eu_west_2
+  service_code = var.quota_service_code
+  quota_code   = var.quota_code
+}
+
+data "aws_servicequotas_service_quota" "live_ap_southeast_1" {
+  count        = aws_servicequotas_service_quota.sg_rules_ap_southeast_1.*.id != [] ? 1 : 0
+  provider     = aws.ap_southeast_1
+  service_code = var.quota_service_code
+  quota_code   = var.quota_code
+}
+
+data "aws_servicequotas_service_quota" "live_us_west_2" {
+  count        = aws_servicequotas_service_quota.sg_rules_us_west_2.*.id != [] ? 1 : 0
+  provider     = aws.us_west_2
   service_code = var.quota_service_code
   quota_code   = var.quota_code
 }
 
 output "security_group_quota_values" {
-  value = { for r, d in data.aws_servicequotas_service_quota.live : r => d.value }
+  value = {
+    us-east-1      = data.aws_servicequotas_service_quota.live_us_east_1.*.value[0]
+    eu-west-2      = data.aws_servicequotas_service_quota.live_eu_west_2.*.value[0]
+    ap-southeast-1 = data.aws_servicequotas_service_quota.live_ap_southeast_1.*.value[0]
+    us-west-2      = data.aws_servicequotas_service_quota.live_us_west_2.*.value[0]
+  }
 }

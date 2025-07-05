@@ -1,5 +1,23 @@
 provider "aws" {
-  region      = "{{ provider_region }}"
+  alias  = "us_east_1"
+  region = "us-east-1"
   assume_role { role_arn = "{{ target_admin_role_arn }}" }
-  default_tags { tags = { managed_by = "AFT" } }
+}
+
+provider "aws" {
+  alias  = "eu_west_2"
+  region = "eu-west-2"
+  assume_role { role_arn = "{{ target_admin_role_arn }}" }
+}
+
+provider "aws" {
+  alias  = "ap_southeast_1"
+  region = "ap-southeast-1"
+  assume_role { role_arn = "{{ target_admin_role_arn }}" }
+}
+
+provider "aws" {
+  alias  = "us_west_2"
+  region = "us-west-2"
+  assume_role { role_arn = "{{ target_admin_role_arn }}" }
 }
