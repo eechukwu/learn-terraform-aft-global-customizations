@@ -1,5 +1,5 @@
 # ==========================================
-# variables.jinja - Variable definitions
+# variables.jinja - Variable definitions (SIMPLIFIED)
 # ==========================================
 variable "aft_timestamp" {
   description = "AFT execution timestamp"
@@ -11,9 +11,4 @@ variable "quota_override_value" {
   description = "Override the default quota value if needed"
   type        = number
   default     = null
-  
-  validation {
-    condition     = var.quota_override_value == null || (var.quota_override_value != null && var.quota_override_value >= 60)
-    error_message = "Quota override value must be at least 60 (AWS default) or null."
-  }
 }
