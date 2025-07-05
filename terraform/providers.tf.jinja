@@ -1,51 +1,57 @@
 # ==========================================
-# providers.tf.jinja (FIXED - NO terraform block)
+# providers.tf.jinja - Provider configuration
 # ==========================================
-# Default provider
+# Default provider (for AFT management)
 provider "aws" {
   region = "{{ provider_region }}"
   assume_role {
     role_arn = "{{ aft_admin_role_arn }}"
   }
+  
+  default_tags {
+    tags = local.common_tags
+  }
 }
 
-# Regional provider aliases - hardcoded to avoid Jinja/locals dependency issues
+# Regional providers for quota management
 provider "aws" {
-  alias  = "us_east_1"
-  region = "us-east-1"
+  alias  = "primary"
+  region = local.target_regions.primary
   assume_role {
     role_arn = "{{ target_admin_role_arn }}"
+  }
+  
+  default_tags {
+    tags = merge(local.common_tags, {
+      Region = local.target_regions.primary
+    })
   }
 }
 
 provider "aws" {
-  alias  = "eu_west_2"
-  region = "eu-west-2"
+  alias  = "secondary"
+  region = local.target_regions.secondary
   assume_role {
     role_arn = "{{ target_admin_role_arn }}"
+  }
+  
+  default_tags {
+    tags = merge(local.common_tags, {
+      Region = local.target_regions.secondary
+    })
   }
 }
 
 provider "aws" {
-  alias  = "ap_southeast_1"
-  region = "ap-southeast-1"
+  alias  = "tertiary"
+  region = local.target_regions.tertiary
   assume_role {
     role_arn = "{{ target_admin_role_arn }}"
   }
-}
-
-provider "aws" {
-  alias  = "us_west_2"
-  region = "us-west-2"
-  assume_role {
-    role_arn = "{{ target_admin_role_arn }}"
-  }
-}
-
-provider "aws" {
-  alias  = "ca_central_1"
-  region = "ca-central-1"
-  assume_role {
-    role_arn = "{{ target_admin_role_arn }}"
+  
+  default_tags {
+    tags = merge(local.common_tags, {
+      Region = local.target_regions.tertiary
+    })
   }
 }

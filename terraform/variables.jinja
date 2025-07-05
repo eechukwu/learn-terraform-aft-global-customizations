@@ -1,9 +1,22 @@
-variable "quota_service_code" { default = "vpc" }
-variable "quota_code" { default = "L-0EA8095F" }
-variable "default_target_quota_value" { default = 200 }
-variable "enable_quota_automation" { default = true }
-
 variable "aft_timestamp" {
-  type    = string
-  default = "{{ timestamp }}"
+  description = "AFT execution timestamp"
+  type        = string
+  default     = "{{ timestamp }}"
+}
+
+variable "enable_quota_monitoring" {
+  description = "Enable quota monitoring and alerting"
+  type        = bool
+  default     = true
+}
+
+variable "quota_override_value" {
+  description = "Override the default quota value if needed"
+  type        = number
+  default     = null
+  
+  validation {
+    condition     = var.quota_override_value == null || var.quota_override_value >= 60
+    error_message = "Quota override value must be at least 60 (AWS default) or null."
+  }
 }

@@ -1,24 +1,22 @@
-# ==========================================
-# locals.tf (KEEP AS IS)
-# ==========================================
 locals {
-  # canonical list – add/remove regions here **once**
-  target_regions = [
-    "us-east-1",
-    "eu-west-2",
-    "ap-southeast-1",
-    "us-west-2",
-    "ca-central-1"
-  ]
-
-  # same list, but with hyphens replaced so it matches alias names
-  target_regions_clean = [
-    for r in local.target_regions : replace(r, "-", "_")
-  ]
-
-  # map region -> provider reference (aws.<alias>)
-  region_providers = {
-    for r in local.target_regions :
-    r => "aws.${replace(r, "-", "_")}"
+  # Target regions for quota management
+  target_regions = {
+    primary   = "us-east-1"
+    secondary = "eu-west-2"
+    tertiary  = "ap-southeast-1"
+  }
+  
+  # Service quota configuration
+  quota_config = {
+    service_code = "vpc"
+    quota_code   = "L-0EA8095F"  # Rules per security group
+    quota_value  = 200
+  }
+  
+  # Common tags for all resources
+  common_tags = {
+    ManagedBy   = "AFT"
+    Environment = "global"
+    Purpose     = "quota-management"
   }
 }

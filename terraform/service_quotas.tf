@@ -1,49 +1,55 @@
-############################
-# SINGLE QUOTA RESOURCE
-############################
-resource "aws_servicequotas_service_quota" "sg_rules" {
-  # Use region names as keys, then dynamically reference the provider
-  for_each = toset(local.target_regions)
 
-  # Dynamic provider reference using the region name
-  provider = lookup({
-    "us-east-1"      = aws.us_east_1
-    "eu-west-2"      = aws.eu_west_2
-    "ap-southeast-1" = aws.ap_southeast_1
-    "us-west-2"      = aws.us_west_2
-    "ca-central-1"   = aws.ca_central_1
-  }, each.key)
+# Service quota resources
+resource "aws_servicequotas_service_quota" "security_group_rules" {
+  for_each = local.target_regions
 
-  service_code = var.quota_service_code
-  quota_code   = var.quota_code
-  value        = var.default_target_quota_value
+  provider     = aws[each.key]
+  service_code = local.quota_config.service_code
+  quota_code   = local.quota_config.quota_code
+  value        = local.quota_config.quota_value
 }
 
-############################
-# MATCHING DATA SOURCE
-############################
-data "aws_servicequotas_service_quota" "live" {
-  for_each = toset(local.target_regions)
+# Data sources to read current quota values
+data "aws_servicequotas_service_quota" "current_quotas" {
+  for_each = local.target_regions
 
-  # Dynamic provider reference using the region name
-  provider = lookup({
-    "us-east-1"      = aws.us_east_1
-    "eu-west-2"      = aws.eu_west_2
-    "ap-southeast-1" = aws.ap_southeast_1
-    "us-west-2"      = aws.us_west_2
-    "ca-central-1"   = aws.ca_central_1
-  }, each.key)
-
-  service_code = var.quota_service_code
-  quota_code   = var.quota_code
+  provider     = aws[each.key]
+  service_code = local.quota_config.service_code
+  quota_code   = local.quota_config.quota_code
 }
 
-############################
-# OUTPUT
-############################
-output "security_group_quota_values" {
+# ==========================================
+# outputs.tf - Output values
+# ==========================================
+output "quota_management_summary" {
+  description = "Summary of security group quota management across regions"
   value = {
-    for r in local.target_regions :
-    r => data.aws_servicequotas_service_quota.live[r].value
+    quota_details = {
+      service_code = local.quota_config.service_code
+      quota_code   = local.quota_config.quota_code
+      description  = "Rules per security group"
+      target_value = local.quota_config.quota_value
+    }
+    
+    regional_quotas = {
+      for region_key, region_name in local.target_regions :
+      region_name => {
+        region_key    = region_key
+        current_value = data.aws_servicequotas_service_quota.current_quotas[region_key].value
+        target_value  = local.quota_config.quota_value
+        resource_id   = aws_servicequotas_service_quota.security_group_rules[region_key].id
+      }
+    }
+    
+    managed_regions = values(local.target_regions)
+    total_regions   = length(local.target_regions)
+  }
+}
+
+output "quota_values_by_region" {
+  description = "Current quota values by region (simplified output)"
+  value = {
+    for region_key, region_name in local.target_regions :
+    region_name => data.aws_servicequotas_service_quota.current_quotas[region_key].value
   }
 }
