@@ -1,35 +1,6 @@
-{% if tf_distribution_type == "oss" -%}
-terraform {
-  required_version = ">= 0.15.0"
-  backend "s3" {
-    bucket         = "{{ bucket }}"
-    key            = "{{ key }}"
-    region         = "{{ region }}"
-    dynamodb_table = "{{ dynamodb_table }}"
-    encrypt        = true
-    kms_key_id     = "{{ kms_key_id }}"
-    role_arn       = "{{ aft_admin_role_arn }}"
-  }
-}
-{% else -%}
-terraform {
-  backend "remote" {
-    organization = "{{ terraform_org_name }}"
-    workspaces { name = "{{ terraform_workspace_name }}" }
-  }
-}
-{% endif %}
-
-# Define required providers
-terraform {
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-  }
-}
-
+# ==========================================
+# providers.tf.jinja (FIXED - NO terraform block)
+# ==========================================
 # Default provider
 provider "aws" {
   region = "{{ provider_region }}"

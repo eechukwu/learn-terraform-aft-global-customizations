@@ -1,3 +1,6 @@
+# ==========================================
+# locals.tf (KEEP AS IS)
+# ==========================================
 locals {
   # canonical list – add/remove regions here **once**
   target_regions = [
