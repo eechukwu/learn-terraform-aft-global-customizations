@@ -1,7 +1,3 @@
-# ==========================================
-# providers.tf.jinja - Provider configuration
-# ==========================================
-# Default provider (for AFT management)
 provider "aws" {
   region = "{{ provider_region }}"
   assume_role {
@@ -15,43 +11,43 @@ provider "aws" {
 
 # Regional providers for quota management
 provider "aws" {
-  alias  = "primary"
-  region = local.target_regions.primary
+  alias  = "region1"
+  region = local.target_regions.region1
   assume_role {
     role_arn = "{{ target_admin_role_arn }}"
   }
   
   default_tags {
     tags = merge(local.common_tags, {
-      Region = local.target_regions.primary
+      Region = local.target_regions.region1
     })
   }
 }
 
 provider "aws" {
-  alias  = "secondary"
-  region = local.target_regions.secondary
+  alias  = "region2"
+  region = local.target_regions.region2
   assume_role {
     role_arn = "{{ target_admin_role_arn }}"
   }
   
   default_tags {
     tags = merge(local.common_tags, {
-      Region = local.target_regions.secondary
+      Region = local.target_regions.region2
     })
   }
 }
 
 provider "aws" {
-  alias  = "tertiary"
-  region = local.target_regions.tertiary
+  alias  = "region3"
+  region = local.target_regions.region3
   assume_role {
     role_arn = "{{ target_admin_role_arn }}"
   }
   
   default_tags {
     tags = merge(local.common_tags, {
-      Region = local.target_regions.tertiary
+      Region = local.target_regions.region3
     })
   }
 }

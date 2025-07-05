@@ -1,9 +1,9 @@
 locals {
   # Target regions for quota management
   target_regions = {
-    primary   = "us-east-1"
-    secondary = "eu-west-2"
-    tertiary  = "ap-southeast-1"
+    region1 = "us-east-1"
+    region2 = "eu-west-2"
+    region3 = "ap-southeast-1"
   }
   
   # Service quota configuration
