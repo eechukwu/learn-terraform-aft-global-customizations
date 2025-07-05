@@ -1,17 +1,39 @@
 terraform {
   required_version = ">= 1.0"
   required_providers {
-    aws = { source = "hashicorp/aws", version = "~> 5.0" }
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
   }
 }
 
-############################
+########################
 # STATIC PROVIDERS
-############################
-provider "aws" { alias = "us_east_1"      region = "us-east-1"      assume_role { role_arn = "{{ target_admin_role_arn }}" } }
-provider "aws" { alias = "eu_west_2"      region = "eu-west-2"      assume_role { role_arn = "{{ target_admin_role_arn }}" } }
-provider "aws" { alias = "ap_southeast_1" region = "ap-southeast-1" assume_role { role_arn = "{{ target_admin_role_arn }}" } }
-provider "aws" { alias = "us_west_2"      region = "us-west-2"      assume_role { role_arn = "{{ target_admin_role_arn }}" } }
+########################
+provider "aws" "us_east_1" {
+  alias  = "us_east_1"
+  region = "us-east-1"
+  assume_role { role_arn = "{{ target_admin_role_arn }}" }
+}
+
+provider "aws" "eu_west_2" {
+  alias  = "eu_west_2"
+  region = "eu-west-2"
+  assume_role { role_arn = "{{ target_admin_role_arn }}" }
+}
+
+provider "aws" "ap_southeast_1" {
+  alias  = "ap_southeast_1"
+  region = "ap-southeast-1"
+  assume_role { role_arn = "{{ target_admin_role_arn }}" }
+}
+
+provider "aws" "us_west_2" {
+  alias  = "us_west_2"
+  region = "us-west-2"
+  assume_role { role_arn = "{{ target_admin_role_arn }}" }
+}
 
 locals {
   region_providers = {
@@ -28,14 +50,14 @@ resource "aws_servicequotas_service_quota" "sg_rules_increase" {
   } : {}
 
   provider     = each.value
-  service_code = var.quota_service_code      # "vpc"
-  quota_code   = var.quota_code              # "L-0EA8095F"
+  service_code = var.quota_service_code
+  quota_code   = var.quota_code
   value        = var.default_target_quota_value
 }
 
 data "aws_servicequotas_service_quota" "live" {
   for_each     = aws_servicequotas_service_quota.sg_rules_increase
-  provider     = each.value.provider
+  provider     = each.value     # fixed: use alias itself
   service_code = var.quota_service_code
   quota_code   = var.quota_code
 }
