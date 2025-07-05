@@ -1,9 +1,9 @@
-variable "quota_service_code"  { default = "vpc" }
-variable "quota_code"          { default = "L-0EA8095F" }
+variable "quota_service_code" { default = "vpc" }
+variable "quota_code" { default = "L-0EA8095F" }
 variable "default_target_quota_value" { default = 200 }
-variable "enable_quota_automation"    { default = true }
+variable "enable_quota_automation" { default = true }
 
 variable "aft_timestamp" {
   type    = string
-  default = "{{ timestamp }}"   # leave this – it’s filled in by Jinja at build time
+  default = "{{ timestamp }}"
 }

@@ -1,14 +1,80 @@
-{#---
-  Render one aliased provider block for every region in locals.target_regions.
-  Dash ( - ) is illegal in an alias, so we replace with underscore.
----#}
+{% if tf_distribution_type == "oss" -%}
+terraform {
+  required_version = ">= 0.15.0"
+  backend "s3" {
+    bucket         = "{{ bucket }}"
+    key            = "{{ key }}"
+    region         = "{{ region }}"
+    dynamodb_table = "{{ dynamodb_table }}"
+    encrypt        = true
+    kms_key_id     = "{{ kms_key_id }}"
+    role_arn       = "{{ aft_admin_role_arn }}"
+  }
+}
+{% else -%}
+terraform {
+  backend "remote" {
+    organization = "{{ terraform_org_name }}"
+    workspaces { name = "{{ terraform_workspace_name }}" }
+  }
+}
+{% endif %}
 
-{% for r in local.target_regions_clean %}
+# Define required providers
+terraform {
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+
+# Default provider
 provider "aws" {
-  alias  = "{{ r | replace('-', '_') }}"
-  region = "{{ r }}"
+  region = "{{ provider_region }}"
+  assume_role {
+    role_arn = "{{ aft_admin_role_arn }}"
+  }
+}
+
+# Regional provider aliases - hardcoded to avoid Jinja/locals dependency issues
+provider "aws" {
+  alias  = "us_east_1"
+  region = "us-east-1"
   assume_role {
     role_arn = "{{ target_admin_role_arn }}"
   }
 }
-{% endfor %}
+
+provider "aws" {
+  alias  = "eu_west_2"
+  region = "eu-west-2"
+  assume_role {
+    role_arn = "{{ target_admin_role_arn }}"
+  }
+}
+
+provider "aws" {
+  alias  = "ap_southeast_1"
+  region = "ap-southeast-1"
+  assume_role {
+    role_arn = "{{ target_admin_role_arn }}"
+  }
+}
+
+provider "aws" {
+  alias  = "us_west_2"
+  region = "us-west-2"
+  assume_role {
+    role_arn = "{{ target_admin_role_arn }}"
+  }
+}
+
+provider "aws" {
+  alias  = "ca_central_1"
+  region = "ca-central-1"
+  assume_role {
+    role_arn = "{{ target_admin_role_arn }}"
+  }
+}
