@@ -1,3 +1,6 @@
+# ==========================================
+# locals.tf - Configuration constants
+# ==========================================
 locals {
   # Target regions for quota management
   target_regions = {

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Post-apply hook for AFT: run quota validator every 5 min until
 # all regions reach the target, or the attempt limit is hit.
-
 set -euo pipefail
 
 ###############################################
@@ -23,8 +22,7 @@ fi
 # Validation loop                             #
 ###############################################
 SCRIPT_DIR="$(dirname "$0")"
-VALIDATOR="$SCRIPT_DIR/validate_quota.sh"
-
+VALIDATOR="$SCRIPT_DIR/validate-quota.sh"
 INTERVAL="${WAIT_SECONDS:-300}"   # 5 min default
 MAX_ATTEMPTS="${MAX_ATTEMPTS:-24}" # 24 × 5 min = 2 h default
 

@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # Prints current SG-rules quota value for each region (tab-separated).
-# Usage: quick_check.sh [region …] — defaults to common four.
-
+# Usage: quick_check.sh [region …] — defaults to common three.
 set -euo pipefail
 
 SERVICE_CODE="vpc"
 QUOTA_CODE="L-0EA8095F"
-REGIONS=("us-east-1" "eu-west-2" "ap-southeast-1" "us-west-2")
+REGIONS=("us-east-1" "eu-west-2" "ap-southeast-1")
+
 [[ $# -gt 0 ]] && REGIONS=("$@")
 
 printf "Region\tQuotaValue\n"
