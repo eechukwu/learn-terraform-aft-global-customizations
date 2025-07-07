@@ -1,4 +1,3 @@
-# Lambda function and supporting resources for quota management
 resource "aws_kms_key" "lambda_logs" {
   description             = "KMS key for Lambda quota manager logs"
   deletion_window_in_days = 7
@@ -112,7 +111,6 @@ resource "aws_iam_role" "quota_lambda_role" {
   tags = local.common_tags
 }
 
-# FIXED: Combined all Service Quotas permissions into one policy
 resource "aws_iam_role_policy" "quota_lambda_policy" {
   name = "quota-management-policy"
   role = aws_iam_role.quota_lambda_role.id
@@ -164,7 +162,6 @@ resource "aws_iam_role_policy" "lambda_metrics_policy" {
   })
 }
 
-# FIXED: Service-linked role creation policy
 resource "aws_iam_role_policy" "service_linked_role_policy" {
   name = "service-linked-role-policy"
   role = aws_iam_role.quota_lambda_role.id
@@ -214,8 +211,17 @@ resource "aws_lambda_invocation" "quota_request" {
     aws_lambda_function.quota_manager,
     aws_iam_role_policy.quota_lambda_policy,
     aws_iam_role_policy.service_linked_role_policy,
+    aws_iam_role_policy.lambda_metrics_policy,
     aws_lambda_alias.live
   ]
+  
+  triggers = {
+    lambda_code_hash = data.archive_file.quota_lambda_zip.output_base64sha256
+    permissions_hash = md5(jsonencode([
+      aws_iam_role_policy.quota_lambda_policy.policy,
+      aws_iam_role_policy.service_linked_role_policy.policy
+    ]))
+  }
 }
 
 resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
