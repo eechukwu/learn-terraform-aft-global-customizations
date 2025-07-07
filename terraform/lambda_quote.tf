@@ -112,6 +112,7 @@ resource "aws_iam_role" "quota_lambda_role" {
   tags = local.common_tags
 }
 
+# FIXED: Combined all Service Quotas permissions into one policy
 resource "aws_iam_role_policy" "quota_lambda_policy" {
   name = "quota-management-policy"
   role = aws_iam_role.quota_lambda_role.id
@@ -125,12 +126,11 @@ resource "aws_iam_role_policy" "quota_lambda_policy" {
           "servicequotas:GetServiceQuota",
           "servicequotas:RequestServiceQuotaIncrease",
           "servicequotas:ListRequestedServiceQuotaChangeHistory",
-          "servicequotas:GetRequestedServiceQuotaChange"
+          "servicequotas:GetRequestedServiceQuotaChange",
+          "servicequotas:ListServiceQuotas",
+          "servicequotas:GetAWSDefaultServiceQuota"
         ]
-        Resource = [
-          "arn:aws:servicequotas:*:${local.account_id}:vpc/*",
-          "arn:aws:servicequotas:*:${local.account_id}:*/L-0EA8095F"
-        ]
+        Resource = "*"
       }
     ]
   })
@@ -164,6 +164,42 @@ resource "aws_iam_role_policy" "lambda_metrics_policy" {
   })
 }
 
+# FIXED: Service-linked role creation policy
+resource "aws_iam_role_policy" "service_linked_role_policy" {
+  name = "service-linked-role-policy"
+  role = aws_iam_role.quota_lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "iam:CreateServiceLinkedRole"
+        ]
+        Resource = [
+          "arn:aws:iam::*:role/aws-service-role/servicequotas.amazonaws.com/*"
+        ]
+        Condition = {
+          StringEquals = {
+            "iam:AWSServiceName" = "servicequotas.amazonaws.com"
+          }
+        }
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "iam:AttachRolePolicy",
+          "iam:PutRolePolicy"
+        ]
+        Resource = [
+          "arn:aws:iam::*:role/aws-service-role/servicequotas.amazonaws.com/*"
+        ]
+      }
+    ]
+  })
+}
+
 resource "aws_lambda_invocation" "quota_request" {
   function_name = aws_lambda_alias.live.function_name
   qualifier     = aws_lambda_alias.live.name
@@ -177,6 +213,7 @@ resource "aws_lambda_invocation" "quota_request" {
   depends_on = [
     aws_lambda_function.quota_manager,
     aws_iam_role_policy.quota_lambda_policy,
+    aws_iam_role_policy.service_linked_role_policy,
     aws_lambda_alias.live
   ]
 }
