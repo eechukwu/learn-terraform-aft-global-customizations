@@ -6,6 +6,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from botocore.config import Config
 from botocore.exceptions import ClientError
+from datetime import datetime
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -32,6 +33,8 @@ def lambda_handler(event, context):
                     future = executor.submit(request_quota_increase, service_code, quota_code, quota_value, region)
                 elif action == 'check_status':
                     future = executor.submit(check_quota_status, service_code, quota_code, region)
+                elif action == 'monitor_requests':
+                    future = executor.submit(monitor_quota_requests, service_code, quota_code, region)
                 else:
                     results[region] = {'status': 'error', 'error': f'Unknown action: {action}'}
                     continue
@@ -44,16 +47,29 @@ def lambda_handler(event, context):
                 except Exception as e:
                     results[region] = {'status': 'error', 'error': str(e), 'region': region}
         
-        successful = [r for r, result in results.items() if result.get('status') in ['success', 'already_sufficient']]
-        execution_time = round(time.time() - start_time, 2)
-        
-        summary = {
-            'total_regions': len(regions),
-            'successful_regions': len(successful),
-            'failed_regions': len(regions) - len(successful),
-            'success_rate': f"{(len(successful)/len(regions)*100):.1f}%",
-            'execution_time_seconds': execution_time
-        }
+        if action == 'monitor_requests':
+            approved = [r for r, result in results.items() if result.get('request_status') == 'CASE_CLOSED']
+            pending = [r for r, result in results.items() if result.get('request_status') == 'PENDING']
+            
+            summary = {
+                'total_regions': len(regions),
+                'approved_regions': len(approved),
+                'pending_regions': len(pending),
+                'all_approved': len(pending) == 0,
+                'execution_time_seconds': round(time.time() - start_time, 2)
+            }
+            
+            if len(pending) == 0 and len(approved) > 0:
+                send_completion_notification(results, summary)
+        else:
+            successful = [r for r, result in results.items() if result.get('status') in ['success', 'already_sufficient']]
+            summary = {
+                'total_regions': len(regions),
+                'successful_regions': len(successful),
+                'failed_regions': len(regions) - len(successful),
+                'success_rate': f"{(len(successful)/len(regions)*100):.1f}%",
+                'execution_time_seconds': round(time.time() - start_time, 2)
+            }
         
         return {
             'statusCode': 200,
@@ -136,3 +152,75 @@ def check_quota_status(service_code, quota_code, region):
         }
     except Exception as e:
         return {'status': 'error', 'error': str(e), 'region': region}
+
+def monitor_quota_requests(service_code, quota_code, region):
+    try:
+        client = boto3.client('service-quotas', region_name=region, config=BOTO3_CONFIG)
+        
+        current_quota = client.get_service_quota(ServiceCode=service_code, QuotaCode=quota_code)
+        current_value = int(current_quota['Quota']['Value'])
+        
+        requests = client.list_requested_service_quota_change_history(
+            ServiceCode=service_code,
+            QuotaCode=quota_code
+        )
+        
+        latest_request = None
+        for request in requests.get('RequestedQuotas', []):
+            if not latest_request or request['Created'] > latest_request['Created']:
+                latest_request = request
+        
+        if not latest_request:
+            return {
+                'status': 'no_requests',
+                'current_value': current_value,
+                'message': 'No quota increase requests found',
+                'region': region
+            }
+        
+        return {
+            'status': 'success',
+            'current_value': current_value,
+            'requested_value': int(latest_request['DesiredValue']),
+            'request_id': latest_request['Id'],
+            'request_status': latest_request['Status'],
+            'created': latest_request['Created'].strftime('%Y-%m-%d %H:%M:%S'),
+            'last_updated': latest_request['LastUpdated'].strftime('%Y-%m-%d %H:%M:%S'),
+            'message': f"Request {latest_request['Status']} - Current: {current_value}, Requested: {int(latest_request['DesiredValue'])}",
+            'region': region
+        }
+        
+    except Exception as e:
+        return {'status': 'error', 'error': str(e), 'region': region}
+
+def send_completion_notification(results, summary):
+    try:
+        sns = boto3.client('sns')
+        topic_arn = os.environ.get('SNS_TOPIC_ARN')
+        
+        if not topic_arn:
+            return
+        
+        message = f"""Quota Increase Requests Completed
+
+All quota increase requests have been approved.
+
+Summary:
+- Total Regions: {summary['total_regions']}
+- Approved Regions: {summary['approved_regions']}
+
+Regional Results:
+"""
+        
+        for region, result in results.items():
+            if result.get('status') == 'success':
+                message += f"- {region}: {result.get('current_value')} -> {result.get('requested_value')} (Approved)\n"
+        
+        sns.publish(
+            TopicArn=topic_arn,
+            Subject="AFT Quota Increases Approved",
+            Message=message
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to send notification: {str(e)}")

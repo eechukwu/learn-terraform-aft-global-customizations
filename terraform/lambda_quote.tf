@@ -64,6 +64,7 @@ resource "aws_lambda_function" "quota_manager" {
       QUOTA_CODE   = local.quota_config.quota_code
       QUOTA_VALUE  = local.quota_config.quota_value
       LOG_LEVEL    = "INFO"
+      SNS_TOPIC_ARN = aws_sns_topic.quota_notifications.arn
     }
   }
 
@@ -139,8 +140,8 @@ resource "aws_iam_role_policy_attachment" "lambda_logs" {
   policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
 }
 
-resource "aws_iam_role_policy" "lambda_metrics_policy" {
-  name = "lambda-metrics-policy"
+resource "aws_iam_role_policy" "lambda_sns_policy" {
+  name = "lambda-sns-policy"
   role = aws_iam_role.quota_lambda_role.id
 
   policy = jsonencode({
@@ -149,14 +150,9 @@ resource "aws_iam_role_policy" "lambda_metrics_policy" {
       {
         Effect = "Allow"
         Action = [
-          "cloudwatch:PutMetricData"
+          "sns:Publish"
         ]
-        Resource = "*"
-        Condition = {
-          StringEquals = {
-            "cloudwatch:namespace" = "AFT/QuotaManager"
-          }
-        }
+        Resource = aws_sns_topic.quota_notifications.arn
       }
     ]
   })
@@ -197,6 +193,38 @@ resource "aws_iam_role_policy" "service_linked_role_policy" {
   })
 }
 
+resource "aws_sns_topic" "quota_notifications" {
+  name = "aft-quota-notifications-${random_id.lambda_suffix.hex}"
+  tags = local.common_tags
+}
+
+resource "aws_cloudwatch_event_rule" "quota_monitor" {
+  name                = "aft-quota-monitor-${random_id.lambda_suffix.hex}"
+  description         = "Monitor quota request approvals every 10 minutes"
+  schedule_expression = "rate(10 minutes)"
+  tags                = local.common_tags
+}
+
+resource "aws_cloudwatch_event_target" "lambda_target" {
+  rule      = aws_cloudwatch_event_rule.quota_monitor.name
+  target_id = "QuotaMonitorTarget"
+  arn       = aws_lambda_alias.live.arn
+  
+  input = jsonencode({
+    action = "monitor_requests"
+    regions = local.target_regions
+  })
+}
+
+resource "aws_lambda_permission" "allow_eventbridge" {
+  statement_id  = "AllowExecutionFromEventBridge"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.quota_manager.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.quota_monitor.arn
+  qualifier     = aws_lambda_alias.live.name
+}
+
 resource "aws_lambda_invocation" "quota_request" {
   function_name = aws_lambda_alias.live.function_name
   qualifier     = aws_lambda_alias.live.name
@@ -211,7 +239,7 @@ resource "aws_lambda_invocation" "quota_request" {
     aws_lambda_function.quota_manager,
     aws_iam_role_policy.quota_lambda_policy,
     aws_iam_role_policy.service_linked_role_policy,
-    aws_iam_role_policy.lambda_metrics_policy,
+    aws_iam_role_policy.lambda_sns_policy,
     aws_lambda_alias.live
   ]
   
@@ -222,40 +250,4 @@ resource "aws_lambda_invocation" "quota_request" {
       aws_iam_role_policy.service_linked_role_policy.policy
     ]))
   }
-}
-
-resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
-  alarm_name          = "aft-quota-manager-errors-${random_id.lambda_suffix.hex}"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = "2"
-  metric_name         = "Errors"
-  namespace           = "AWS/Lambda"
-  period              = "300"
-  statistic           = "Sum"
-  threshold           = "0"
-  alarm_description   = "Lambda error monitoring"
-
-  dimensions = {
-    FunctionName = aws_lambda_function.quota_manager.function_name
-  }
-
-  tags = local.common_tags
-}
-
-resource "aws_cloudwatch_metric_alarm" "lambda_duration" {
-  alarm_name          = "aft-quota-manager-duration-${random_id.lambda_suffix.hex}"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = "2"
-  metric_name         = "Duration"
-  namespace           = "AWS/Lambda"
-  period              = "300"
-  statistic           = "Average"
-  threshold           = "600000"
-  alarm_description   = "Lambda duration monitoring"
-
-  dimensions = {
-    FunctionName = aws_lambda_function.quota_manager.function_name
-  }
-
-  tags = local.common_tags
 }
