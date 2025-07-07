@@ -15,7 +15,7 @@ locals {
   }
   
   lambda_config = {
-    function_name = "aft-quota-manager-${random_id.lambda_suffix.hex}"
+    function_name = "aft-quota-manager-${local.account_id}"
     timeout      = 900
     memory_size  = 512
   }
@@ -26,10 +26,6 @@ locals {
     ManagedBy = "AFT"
     Purpose   = "quota-management"
   }
-}
-
-resource "random_id" "lambda_suffix" {
-  byte_length = 4
 }
 
 data "aws_caller_identity" "current" {}

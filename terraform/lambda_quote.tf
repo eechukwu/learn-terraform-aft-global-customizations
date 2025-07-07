@@ -36,7 +36,7 @@ resource "aws_kms_key" "lambda_logs" {
 }
 
 resource "aws_kms_alias" "lambda_logs" {
-  name          = "alias/aft-quota-manager-logs-${random_id.lambda_suffix.hex}"
+  name          = "alias/aft-quota-manager-logs-${local.account_id}"
   target_key_id = aws_kms_key.lambda_logs.key_id
 }
 
@@ -94,7 +94,7 @@ data "archive_file" "quota_lambda_zip" {
 }
 
 resource "aws_iam_role" "quota_lambda_role" {
-  name = "aft-quota-lambda-role-${random_id.lambda_suffix.hex}"
+  name = "aft-quota-lambda-role-${local.account_id}"
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -194,12 +194,12 @@ resource "aws_iam_role_policy" "service_linked_role_policy" {
 }
 
 resource "aws_sns_topic" "quota_notifications" {
-  name = "aft-quota-notifications-${random_id.lambda_suffix.hex}"
+  name = "aft-quota-notifications-${local.account_id}"
   tags = local.common_tags
 }
 
 resource "aws_cloudwatch_event_rule" "quota_monitor" {
-  name                = "aft-quota-monitor-${random_id.lambda_suffix.hex}"
+  name                = "aft-quota-monitor-${local.account_id}"
   description         = "Monitor quota request approvals every 10 minutes"
   schedule_expression = "rate(10 minutes)"
   tags                = local.common_tags
@@ -250,4 +250,40 @@ resource "aws_lambda_invocation" "quota_request" {
       aws_iam_role_policy.service_linked_role_policy.policy
     ]))
   }
+}
+
+resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
+  alarm_name          = "aft-quota-manager-errors-${local.account_id}"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = "2"
+  metric_name         = "Errors"
+  namespace           = "AWS/Lambda"
+  period              = "300"
+  statistic           = "Sum"
+  threshold           = "0"
+  alarm_description   = "Lambda error monitoring"
+
+  dimensions = {
+    FunctionName = aws_lambda_function.quota_manager.function_name
+  }
+
+  tags = local.common_tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "lambda_duration" {
+  alarm_name          = "aft-quota-manager-duration-${local.account_id}"
+  comparison_operator = "GreaterThanThreshold"
+  evaluation_periods  = "2"
+  metric_name         = "Duration"
+  namespace           = "AWS/Lambda"
+  period              = "300"
+  statistic           = "Average"
+  threshold           = "600000"
+  alarm_description   = "Lambda duration monitoring"
+
+  dimensions = {
+    FunctionName = aws_lambda_function.quota_manager.function_name
+  }
+
+  tags = local.common_tags
 }
