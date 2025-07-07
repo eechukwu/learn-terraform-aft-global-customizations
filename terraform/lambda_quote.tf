@@ -207,7 +207,7 @@ resource "aws_cloudwatch_event_rule" "quota_monitor" {
 
 resource "aws_cloudwatch_event_target" "lambda_target" {
   rule      = aws_cloudwatch_event_rule.quota_monitor.name
-  target_id = "QuotaMonitorTarget"
+  target_id = "QuotaMonitorTarget-${local.account_id}"
   arn       = aws_lambda_alias.live.arn
   
   input = jsonencode({
