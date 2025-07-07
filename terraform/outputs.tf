@@ -1,53 +1,36 @@
-# ==========================================
-# outputs.tf - Output values
-# ==========================================
-output "quota_management_summary" {
-  description = "Summary of security group quota management across regions"
+# Output values for Lambda quota management
+output "lambda_quota_manager" {
+  description = "Lambda function details"
   value = {
+    function_name = aws_lambda_function.quota_manager.function_name
+    function_arn  = aws_lambda_function.quota_manager.arn
+    log_group     = aws_cloudwatch_log_group.quota_lambda_logs.name
+  }
+}
+
+output "quota_request_results" {
+  description = "Results from quota request execution"
+  value = jsondecode(aws_lambda_invocation.quota_request.result)
+}
+
+output "quota_management_summary" {
+  description = "Summary of quota management configuration"
+  value = {
+    target_regions = local.target_regions
+    total_regions  = length(local.target_regions)
     quota_details = {
       service_code = local.quota_config.service_code
       quota_code   = local.quota_config.quota_code
-      description  = "Rules per security group"
-      target_value = local.quota_config.quota_value
+      quota_value  = local.quota_config.quota_value
     }
-    
-    regional_quotas = {
-      (local.target_regions.region1) = {
-        region_key   = "region1"
-        target_value = local.quota_config.quota_value
-        resource_id  = aws_servicequotas_service_quota.security_group_rules_region1.id
-      }
-      (local.target_regions.region2) = {
-        region_key   = "region2"
-        target_value = local.quota_config.quota_value
-        resource_id  = aws_servicequotas_service_quota.security_group_rules_region2.id
-      }
-      (local.target_regions.region3) = {
-        region_key   = "region3"
-        target_value = local.quota_config.quota_value
-        resource_id  = aws_servicequotas_service_quota.security_group_rules_region3.id
-      }
-    }
-    
-    managed_regions = values(local.target_regions)
-    total_regions   = length(local.target_regions)
+    lambda_function = local.lambda_config.function_name
   }
 }
 
-output "quota_values_by_region" {
-  description = "Target quota values by region"
+output "operational_commands" {
+  description = "Commands for operational management"
   value = {
-    (local.target_regions.region1) = local.quota_config.quota_value
-    (local.target_regions.region2) = local.quota_config.quota_value
-    (local.target_regions.region3) = local.quota_config.quota_value
-  }
-}
-
-output "quota_resource_ids" {
-  description = "Service quota resource IDs for reference"
-  value = {
-    (local.target_regions.region1) = aws_servicequotas_service_quota.security_group_rules_region1.id
-    (local.target_regions.region2) = aws_servicequotas_service_quota.security_group_rules_region2.id
-    (local.target_regions.region3) = aws_servicequotas_service_quota.security_group_rules_region3.id
+    check_quotas = "aws lambda invoke --function-name ${aws_lambda_function.quota_manager.function_name} --qualifier live --payload '{\"action\":\"check_status\"}' response.json"
+    view_logs = "aws logs tail /aws/lambda/${aws_lambda_function.quota_manager.function_name} --follow"
   }
 }

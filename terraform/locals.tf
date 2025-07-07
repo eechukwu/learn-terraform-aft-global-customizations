@@ -1,25 +1,35 @@
-# ==========================================
-# locals.tf - Configuration constants
-# ==========================================
+# Configuration constants for AFT quota management
 locals {
-  # Target regions for quota management
-  target_regions = {
-    region1 = "us-east-1"
-    region2 = "eu-west-2"
-    region3 = "ap-southeast-1"
-  }
+  target_regions = [
+    "us-east-1",
+    "us-west-2",
+    "eu-west-1", 
+    "eu-west-2",
+    "ap-southeast-1"
+  ]
   
-  # Service quota configuration
   quota_config = {
     service_code = "vpc"
-    quota_code   = "L-0EA8095F"  # Rules per security group
+    quota_code   = "L-0EA8095F"
     quota_value  = 200
   }
   
-  # Common tags for all resources
+  lambda_config = {
+    function_name = "aft-quota-manager-${random_id.lambda_suffix.hex}"
+    timeout      = 900
+    memory_size  = 512
+  }
+  
+  account_id = data.aws_caller_identity.current.account_id
+  
   common_tags = {
-    ManagedBy   = "AFT"
-    Environment = "global"
-    Purpose     = "quota-management"
+    ManagedBy = "AFT"
+    Purpose   = "quota-management"
   }
 }
+
+resource "random_id" "lambda_suffix" {
+  byte_length = 4
+}
+
+data "aws_caller_identity" "current" {}
