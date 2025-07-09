@@ -225,6 +225,9 @@ resource "aws_lambda_function" "quota_manager" {
   depends_on = [
     aws_iam_role_policy_attachment.lambda_logs,
     aws_cloudwatch_log_group.quota_lambda_logs,
+    aws_iam_role_policy.quota_lambda_policy,
+    aws_iam_role_policy.lambda_sns_policy,
+    aws_iam_role_policy.service_linked_role_policy,
   ]
 }
 
@@ -272,33 +275,6 @@ resource "aws_lambda_permission" "allow_eventbridge" {
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.quota_monitor.arn
   qualifier     = aws_lambda_alias.live.name
-}
-
-resource "aws_lambda_invocation" "quota_request" {
-  function_name = aws_lambda_alias.live.function_name
-  qualifier     = aws_lambda_alias.live.name
-  
-  input = jsonencode({
-    action = "request_quotas"
-    regions = local.target_regions
-    quota_value = local.quota_config.quota_value
-  })
-
-  depends_on = [
-    aws_lambda_function.quota_manager,
-    aws_iam_role_policy.quota_lambda_policy,
-    aws_iam_role_policy.service_linked_role_policy,
-    aws_iam_role_policy.lambda_sns_policy,
-    aws_lambda_alias.live
-  ]
-  
-  triggers = {
-    lambda_code_hash = data.archive_file.quota_lambda_zip.output_base64sha256
-    permissions_hash = md5(jsonencode([
-      aws_iam_role_policy.quota_lambda_policy.policy,
-      aws_iam_role_policy.service_linked_role_policy.policy
-    ]))
-  }
 }
 
 resource "aws_cloudwatch_metric_alarm" "lambda_errors" {

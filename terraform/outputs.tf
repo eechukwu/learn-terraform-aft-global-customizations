@@ -1,4 +1,3 @@
-# Output values for Lambda quota management
 output "lambda_quota_manager" {
   description = "Lambda function details"
   value = {
@@ -6,11 +5,6 @@ output "lambda_quota_manager" {
     function_arn  = aws_lambda_function.quota_manager.arn
     log_group     = aws_cloudwatch_log_group.quota_lambda_logs.name
   }
-}
-
-output "quota_request_results" {
-  description = "Results from quota request execution"
-  value = jsondecode(aws_lambda_invocation.quota_request.result)
 }
 
 output "quota_management_summary" {
