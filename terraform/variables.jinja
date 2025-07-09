@@ -10,3 +10,9 @@ variable "quota_override_value" {
   type        = number
   default     = null
 }
+
+variable "notification_email" {
+  description = "Email address for quota notifications"
+  type        = string
+  default     = "keneaft@gmail.com"
+}

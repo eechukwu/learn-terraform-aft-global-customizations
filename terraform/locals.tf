@@ -1,4 +1,3 @@
-# Configuration constants for AFT quota management
 locals {
   target_regions = [
     "us-east-1",
@@ -15,7 +14,7 @@ locals {
   }
   
   lambda_config = {
-    function_name = "aft-quota-manager-${local.account_id}"
+    function_name = "aft-quota-manager-${local.account_id}-${random_id.lambda_suffix.hex}"
     timeout      = 900
     memory_size  = 512
   }

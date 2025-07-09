@@ -1,4 +1,3 @@
-# Provider configuration for AFT integration
 provider "aws" {
   region = "{{ provider_region }}"
   assume_role {
@@ -19,6 +18,10 @@ terraform {
     archive = {
       source  = "hashicorp/archive"
       version = "~> 2.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
     }
   }
 }

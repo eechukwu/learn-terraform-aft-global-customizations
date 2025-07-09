@@ -64,6 +64,6 @@ fi
 
 TARGET_REGIONS=$(get_target_regions)
 REGION_COUNT=$(echo $TARGET_REGIONS | wc -w)
-
 echo "Target regions ($REGION_COUNT): $TARGET_REGIONS"
+
 echo "Pre-API helpers completed successfully"
