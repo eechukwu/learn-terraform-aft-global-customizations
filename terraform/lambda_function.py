@@ -17,11 +17,23 @@ def lambda_handler(event, context):
     start_time = time.time()
     
     try:
-        regions = event.get('regions', ['us-east-1', 'us-west-2', 'eu-west-1', 'eu-west-2', 'ap-southeast-1'])
+        # Get regions from environment variable (set by Terraform locals)
+        regions = event.get('regions', os.environ.get('TARGET_REGIONS', '').split(','))
+        
+        # Filter out empty strings and strip whitespace
+        regions = [region.strip() for region in regions if region.strip()]
+        
+        # Fallback if no regions configured
+        if not regions:
+            logger.warning("No regions configured, using us-east-1 as fallback")
+            regions = ['us-east-1']
+        
         quota_value = event.get('quota_value', int(os.environ.get('QUOTA_VALUE', 200)))
         service_code = event.get('service_code', os.environ.get('SERVICE_CODE', 'vpc'))
         quota_code = event.get('quota_code', os.environ.get('QUOTA_CODE', 'L-0EA8095F'))
         action = event.get('action', 'request_quotas')
+        
+        logger.info(f"Processing {action} for regions: {regions}")
         
         results = {}
         

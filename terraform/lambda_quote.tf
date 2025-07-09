@@ -212,11 +212,12 @@ resource "aws_lambda_function" "quota_manager" {
 
   environment {
     variables = {
-      SERVICE_CODE = local.quota_config.service_code
-      QUOTA_CODE   = local.quota_config.quota_code
-      QUOTA_VALUE  = local.quota_config.quota_value
-      LOG_LEVEL    = "INFO"
-      SNS_TOPIC_ARN = aws_sns_topic.quota_notifications.arn
+      SERVICE_CODE    = local.quota_config.service_code
+      QUOTA_CODE      = local.quota_config.quota_code
+      QUOTA_VALUE     = local.quota_config.quota_value
+      TARGET_REGIONS  = join(",", local.target_regions)
+      LOG_LEVEL       = "INFO"
+      SNS_TOPIC_ARN   = aws_sns_topic.quota_notifications.arn
     }
   }
 
