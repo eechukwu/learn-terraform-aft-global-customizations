@@ -136,36 +136,6 @@ resource "aws_iam_role_policy" "quota_lambda_policy" {
           "servicequotas:GetAWSDefaultServiceQuota"
         ]
         Resource = "*"
-        Condition = {
-          StringEquals = {
-            "servicequotas:service-code" = local.quota_config.service_code
-          }
-        }
-      }
-    ]
-  })
-}
-
-resource "aws_iam_role_policy" "quota_cross_region_policy" {
-  name = "quota-cross-region-policy"
-  role = aws_iam_role.quota_lambda_role.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect = "Allow"
-        Action = [
-          "servicequotas:GetServiceQuota",
-          "servicequotas:RequestServiceQuotaIncrease",
-          "servicequotas:ListRequestedServiceQuotaChangeHistory",
-          "servicequotas:GetRequestedServiceQuotaChange",
-          "servicequotas:ListServiceQuotas",
-          "servicequotas:GetAWSDefaultServiceQuota"
-        ]
-        Resource = [
-          "arn:aws:servicequotas:*:${local.account_id}:*"
-        ]
       }
     ]
   })
@@ -255,7 +225,6 @@ resource "aws_lambda_function" "quota_manager" {
   depends_on = [
     aws_iam_role_policy_attachment.lambda_logs,
     aws_cloudwatch_log_group.quota_lambda_logs,
-    aws_iam_role_policy.quota_cross_region_policy,
   ]
 }
 
@@ -327,7 +296,6 @@ resource "aws_lambda_invocation" "quota_request" {
     lambda_code_hash = data.archive_file.quota_lambda_zip.output_base64sha256
     permissions_hash = md5(jsonencode([
       aws_iam_role_policy.quota_lambda_policy.policy,
-      aws_iam_role_policy.quota_cross_region_policy.policy,
       aws_iam_role_policy.service_linked_role_policy.policy
     ]))
   }
