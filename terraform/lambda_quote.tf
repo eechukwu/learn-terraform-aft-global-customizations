@@ -18,18 +18,13 @@ resource "aws_kms_key" "lambda_logs" {
           AWS = "arn:aws:iam::${local.account_id}:root"
         }
         Action   = "kms:*"
-        Resource = "*"
-        Condition = {
-          StringEquals = {
-            "kms:ViaService" = "logs.${data.aws_region.current.name}.amazonaws.com"
-          }
-        }
+        Resource = "arn:aws:kms:${data.aws_region.current.name}:${local.account_id}:key/*"
       },
       {
         Sid    = "Allow CloudWatch Logs"
         Effect = "Allow"
         Principal = {
-          Service = "logs.amazonaws.com"
+          Service = "logs.${data.aws_region.current.name}.amazonaws.com"
         }
         Action = [
           "kms:Encrypt",
@@ -38,24 +33,43 @@ resource "aws_kms_key" "lambda_logs" {
           "kms:GenerateDataKey*",
           "kms:DescribeKey"
         ]
-        Resource = "*"
+        Resource = "arn:aws:kms:${data.aws_region.current.name}:${local.account_id}:key/*"
         Condition = {
-          ArnEquals = {
-            "kms:EncryptionContext:aws:logs:arn" = "arn:aws:logs:${data.aws_region.current.name}:${local.account_id}:log-group:/aws/lambda/${local.lambda_config.function_name}"
+          ArnLike = {
+            "kms:EncryptionContext:aws:logs:arn" = "arn:aws:logs:${data.aws_region.current.name}:${local.account_id}:log-group:/aws/lambda/${local.lambda_config.function_name}*"
           }
         }
       },
       {
-        Sid    = "Allow Lambda service"
+        Sid    = "Allow Lambda service for SNS"
         Effect = "Allow"
         Principal = {
           AWS = aws_iam_role.quota_lambda_role.arn
         }
         Action = [
           "kms:Decrypt",
-          "kms:GenerateDataKey"
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey"
         ]
-        Resource = "*"
+        Resource = "arn:aws:kms:${data.aws_region.current.name}:${local.account_id}:key/*"
+        Condition = {
+          StringEquals = {
+            "kms:ViaService" = "sns.${data.aws_region.current.name}.amazonaws.com"
+          }
+        }
+      },
+      {
+        Sid    = "Allow SNS service"
+        Effect = "Allow"
+        Principal = {
+          Service = "sns.amazonaws.com"
+        }
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey"
+        ]
+        Resource = "arn:aws:kms:${data.aws_region.current.name}:${local.account_id}:key/*"
       }
     ]
   })
