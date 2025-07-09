@@ -1,20 +1,14 @@
 #!/bin/bash
-
 echo "Executing Post-API Helpers"
 
 LAMBDA_FUNCTION=$(aws lambda list-functions --query 'Functions[?contains(FunctionName, `aft-quota-manager`)].FunctionName' --output text)
-
 if [ -z "$LAMBDA_FUNCTION" ]; then
     echo "Error: No AFT quota manager Lambda function found"
     exit 1
 fi
 
 echo "Found Lambda function: $LAMBDA_FUNCTION"
-
-TARGET_REGIONS=("us-east-1" "us-west-2" "eu-west-1" "eu-west-2" "ap-southeast-1")
-echo "Target regions (${#TARGET_REGIONS[@]}): ${TARGET_REGIONS[*]}"
-
-echo "Requesting quota increases across all ${#TARGET_REGIONS[@]} regions..."
+echo "Requesting quota increases (regions configured in Lambda)..."
 
 PAYLOAD='{"action":"request_quotas"}'
 RESPONSE_FILE=$(mktemp)
