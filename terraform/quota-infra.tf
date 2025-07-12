@@ -16,9 +16,6 @@ terraform {
   }
 }
 
-data "aws_caller_identity" "current" {}
-data "aws_region" "current" {}
-
 module "quota_manager" {
   source = "github.com/eechukwu/tf-aws-lambda-develop"
 
