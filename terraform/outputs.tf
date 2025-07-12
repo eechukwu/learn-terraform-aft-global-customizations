@@ -7,7 +7,7 @@ output "lambda_function_arn" {
 }
 
 output "lambda_role_arn" {
-  value = aws_iam_role.lambda_role.arn
+  value = data.aws_iam_role.lambda_execution.arn
 }
 
 output "target_regions" {
