@@ -43,38 +43,31 @@ if [ $? -eq 0 ]; then
     if [ $? -eq 0 ]; then
         echo "Current quota status:"
         if command -v jq >/dev/null 2>&1; then
+            # Get all services from the first region
             SERVICES=$(jq -r '.results | to_entries[0].value | keys[]' "$STATUS_FILE" 2>/dev/null)
             
             for service in $SERVICES; do
                 echo ""
                 echo "=== $service ==="
-                printf "%-20s | %-8s | %s\n" "Region" "Value" "Status"
-                printf "%-20s-+-%-8s-+-%s\n" "--------------------" "--------" "----------"
+                printf "%-20s | %-8s | %-12s | %s\n" "Region" "Current" "Target" "Status"
+                printf "%-20s-+-%-8s-+-%-12s-+-%s\n" "--------------------" "--------" "------------" "----------"
                 
                 jq -r --arg service "$service" '
                     .results | to_entries[] | 
-                    [$service, .key, (.value[$service].current_value // "Error"), (.value[$service].status // "Error")] | @tsv
+                    [.key, (.value[$service].current_value // "Error"), (.value[$service].target_value // "Error"), (.value[$service].status // "Error")] | @tsv
                 ' "$STATUS_FILE" | \
-                while IFS=$'\t' read -r service_name region value status; do
-                    printf "%-20s | %-8s | %s\n" "$region" "$value" "$status"
+                while IFS=$'\t' read -r region current target status; do
+                    printf "%-20s | %-8s | %-12s | %s\n" "$region" "$current" "$target" "$status"
                 done
                 
+                # Calculate summary for this service
                 REGION_COUNT=$(jq -r '.results | keys | length' "$STATUS_FILE")
-                SUCCESSFUL_COUNT=$(jq -r --arg service "$service" '
-                    .results | to_entries[] | 
-                    select(.value[$service].current_value >= 
-                        (if $service == "security_groups" then 200
-                         elif $service == "iam_roles" then 5000
-                         elif $service == "iam_policies" then 1500
-                         else 0 end))
-                ' "$STATUS_FILE" 2>/dev/null | wc -l)
+                TARGET_VALUE=$(jq -r --arg service "$service" '.results | to_entries[0].value[$service].target_value' "$STATUS_FILE" 2>/dev/null || echo "Unknown")
                 
-                TARGET_VALUE=$(case "$service" in
-                    "security_groups") echo "200" ;;
-                    "iam_roles") echo "5000" ;;
-                    "iam_policies") echo "1500" ;;
-                    *) echo "Unknown" ;;
-                esac)
+                SUCCESSFUL_COUNT=$(jq -r --arg service "$service" --arg target "$TARGET_VALUE" '
+                    .results | to_entries[] | 
+                    select(.value[$service].current_value >= ($target | tonumber))
+                ' "$STATUS_FILE" 2>/dev/null | wc -l)
                 
                 echo "Summary: $SUCCESSFUL_COUNT/$REGION_COUNT regions have target quota ($TARGET_VALUE)"
             done
@@ -85,17 +78,23 @@ if [ $? -eq 0 ]; then
             SERVICE_COUNT=$(echo "$SERVICES" | wc -w)
             TOTAL_SERVICES=$((REGION_COUNT * SERVICE_COUNT))
             
+            # Count successful quotas (current >= target)
             TOTAL_SUCCESSFUL=$(jq -r '
                 .results | to_entries[] | .value | to_entries[] | 
-                select(.value.current_value >= 
-                    (if .key == "security_groups" then 200
-                     elif .key == "iam_roles" then 5000
-                     elif .key == "iam_policies" then 1500
-                     else 0 end))
+                select(.value.current_value >= .value.target_value)
             ' "$STATUS_FILE" 2>/dev/null | wc -l)
             
             echo "Total: $TOTAL_SUCCESSFUL/$TOTAL_SERVICES services have target quotas"
             echo "Regions: $REGION_COUNT, Services: $SERVICE_COUNT"
+            
+            # Show request details if available
+            echo ""
+            echo "=== REQUEST DETAILS ==="
+            jq -r '.results | to_entries[] | .value | to_entries[] | 
+                select(.value.status == "requested") | 
+                "\(.key) in \(.value.region // "unknown"): Request ID \(.value.request_id // "unknown")"
+            ' "$STATUS_FILE" 2>/dev/null || echo "No pending requests found"
+            
         else
             echo "Status check completed (install jq for formatted output)"
             cat "$STATUS_FILE" | python3 -m json.tool
