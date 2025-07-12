@@ -29,7 +29,7 @@ resource "aws_sqs_queue" "lambda_dlq" {
 }
 
 module "quota_manager" {
-  source = "../../tf-aws-lambda-develop"
+  source = "github.com/eechukwu/tf-aws-lambda-develop"
 
   function_name = "aft-quota-manager-${data.aws_caller_identity.current.account_id}"
   description   = "AFT Quota Manager"
@@ -110,7 +110,7 @@ data "aws_iam_policy_document" "quota_manager" {
 }
 
 module "sns_to_slack" {
-  source = "../../tf-aws-sns-slack-develop"
+  source = "github.com/eechukwu/tf-aws-sns-slack-develop"
 
   function_name = "aft-quota-slack-notifications-${data.aws_caller_identity.current.account_id}"
   
