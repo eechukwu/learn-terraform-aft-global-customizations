@@ -23,6 +23,8 @@ resource "random_id" "lambda_suffix" {
 resource "aws_sqs_queue" "lambda_dlq" {
   name = "aft-quota-lambda-dlq-${data.aws_caller_identity.current.account_id}-${random_id.lambda_suffix.hex}"
   tags = local.common_tags
+  
+  depends_on = [aws_iam_role_policy.aft_quota_management]
 }
 
 resource "aws_kms_key" "lambda_logs" {
@@ -74,6 +76,8 @@ resource "aws_kms_key" "lambda_logs" {
   })
 
   tags = local.common_tags
+  
+  depends_on = [aws_iam_role_policy.aft_quota_management]
 }
 
 resource "aws_kms_alias" "lambda_logs" {
@@ -104,6 +108,8 @@ module "sns_to_slack" {
   slack_username    = "AWS-Quota-Manager"
 
   tags = local.common_tags
+  
+  depends_on = [aws_iam_role_policy.aft_quota_management]
 }
 
 module "quota_manager" {
@@ -212,6 +218,8 @@ resource "aws_cloudwatch_event_rule" "quota_monitor" {
   description         = "Monitor quota request approvals every 10 minutes"
   schedule_expression = "rate(10 minutes)"
   tags                = local.common_tags
+  
+  depends_on = [aws_iam_role_policy.aft_quota_management]
 }
 
 resource "aws_cloudwatch_event_target" "lambda_target" {
