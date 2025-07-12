@@ -16,37 +16,19 @@ terraform {
   }
 }
 
-# SNS Topic for quota notifications
-resource "aws_sns_topic" "quota_notifications" {
-  name = "aft-quota-notifications-${data.aws_caller_identity.current.account_id}"
-  
-  tags = var.tags
-}
+# Simple Lambda function without complex IAM
+resource "aws_lambda_function" "quota_manager" {
+  filename         = data.archive_file.lambda_zip.output_path
+  function_name    = "aft-quota-manager-${data.aws_caller_identity.current.account_id}"
+  role            = aws_iam_role.lambda_role.arn
+  handler         = "lambda_function.lambda_handler"
+  runtime         = "python3.12"
+  timeout         = 300
+  memory_size     = 256
 
-# Lambda module with minimal configuration
-module "quota_manager" {
-  source = "github.com/eechukwu/tf-aws-lambda-develop"
-
-  function_name = "aft-quota-manager-${data.aws_caller_identity.current.account_id}"
-  description   = "AFT Quota Manager"
-  handler       = "lambda_function.lambda_handler"
-  runtime       = "python3.12"
-  timeout       = "300"
-  memory_size   = "256"
-  source_path   = "${path.module}"
-
-  tags = var.tags
-
-  # Disable all IAM and log group management
-  attach_policy = false
-  manage_log_group = false
-  
-  reserved_concurrent_executions = "5"
-
-  environment = {
+  environment {
     variables = merge({
       TARGET_REGIONS = join(",", local.target_regions)
-      SNS_TOPIC_ARN = aws_sns_topic.quota_notifications.arn
     }, 
     merge([
       for quota_name, quota_config in local.quota_config : {
@@ -56,18 +38,60 @@ module "quota_manager" {
     ]...)
     )
   }
+
+  tags = var.tags
 }
 
-# SNS to Slack module
-module "sns_to_slack" {
-  source = "github.com/eechukwu/tf-aws-sns-slack-develop"
+# IAM role for Lambda
+resource "aws_iam_role" "lambda_role" {
+  name = "aft-quota-manager-role-${data.aws_caller_identity.current.account_id}"
 
-  function_name = "aft-quota-slack-notifications-${data.aws_caller_identity.current.account_id}"
-  
-  slack_token_ssm_parameter_name = var.slack_token_ssm_parameter_name
-  sns_topic_arn                 = aws_sns_topic.quota_notifications.arn
-  default_channel_name          = var.slack_channel_name
-  lambda_log_level              = "INFO"
-  
-  additional_tags = var.tags
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = var.tags
+}
+
+# Basic Lambda execution policy
+resource "aws_iam_role_policy_attachment" "lambda_basic" {
+  role       = aws_iam_role.lambda_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+# Service Quotas policy
+resource "aws_iam_role_policy" "service_quotas" {
+  name = "service-quotas-policy"
+  role = aws_iam_role.lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "servicequotas:GetServiceQuota",
+          "servicequotas:RequestServiceQuotaIncrease",
+          "servicequotas:ListRequestedServiceQuotaChangeHistory"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
+# Archive the Lambda function
+data "archive_file" "lambda_zip" {
+  type        = "zip"
+  source_file = "${path.module}/lambda_function.py"
+  output_path = "${path.module}/lambda_function.zip"
 } 
