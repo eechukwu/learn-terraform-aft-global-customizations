@@ -18,11 +18,6 @@ output "sns_topic_arn" {
   value       = aws_sns_topic.quota_notifications.arn
 }
 
-output "sns_to_slack_function_name" {
-  description = "Name of the Slack notification Lambda function"
-  value       = module.sns_to_slack.lambda_function_name
-}
-
 output "sqs_dlq_arn" {
   description = "ARN of the Dead Letter Queue"
   value       = aws_sqs_queue.lambda_dlq.arn

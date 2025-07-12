@@ -69,31 +69,11 @@ resource "aws_sns_topic" "quota_notifications" {
   tags              = local.common_tags
 }
 
-resource "aws_sns_topic" "slack_notifications" {
-  name              = "aft-slack-notifications-${data.aws_caller_identity.current.account_id}-${random_id.lambda_suffix.hex}"
-  kms_master_key_id = aws_kms_key.lambda_logs.arn
-  tags              = local.common_tags
-}
-
-resource "aws_sns_topic_subscription" "quota_to_slack" {
-  topic_arn = aws_sns_topic.quota_notifications.arn
-  protocol  = "lambda"
-  endpoint  = module.sns_to_slack.lambda_function_arn
-}
-
-resource "aws_lambda_permission" "allow_sns_slack" {
-  statement_id  = "AllowExecutionFromSNS"
-  action        = "lambda:InvokeFunction"
-  function_name = module.sns_to_slack.lambda_function_name
-  principal     = "sns.amazonaws.com"
-  source_arn    = aws_sns_topic.quota_notifications.arn
-}
-
 module "sns_to_slack" {
   source  = "terraform-aws-modules/notify-slack/aws"
   version = "~> 6.0"
 
-  sns_topic_name    = aws_sns_topic.slack_notifications.name
+  sns_topic_name    = aws_sns_topic.quota_notifications.name
   slack_webhook_url = var.slack_webhook_url
   slack_channel     = var.slack_channel_name
   slack_username    = "AWS-Quota-Manager"
