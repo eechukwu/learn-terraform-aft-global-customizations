@@ -29,5 +29,4 @@ locals {
   }
 }
 
-data "aws_caller_identity" "current" {}
-data "aws_region" "current" {} 
+// Removed duplicate data sources to avoid conflicts with modules 

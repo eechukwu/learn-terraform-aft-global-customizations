@@ -16,8 +16,7 @@ terraform {
   }
 }
 
-data "aws_caller_identity" "current" {}
-data "aws_region" "current" {}
+
 
 resource "aws_sns_topic" "quota_notifications" {
   name = "aft-quota-notifications-${data.aws_caller_identity.current.account_id}"
@@ -109,17 +108,159 @@ data "aws_iam_policy_document" "quota_manager" {
   }
 }
 
-module "sns_to_slack" {
-  source = "github.com/eechukwu/tf-aws-sns-slack-develop"
+# Simple SNS to Slack Lambda function
+resource "aws_lambda_function" "sns_to_slack" {
+  filename         = data.archive_file.slack_lambda.output_path
+  function_name    = "aft-quota-slack-notifications-${data.aws_caller_identity.current.account_id}"
+  role            = aws_iam_role.slack_lambda_role.arn
+  handler         = "index.handler"
+  runtime         = "nodejs18.x"
+  timeout         = 30
+  memory_size     = 128
 
-  function_name = "aft-quota-slack-notifications-${data.aws_caller_identity.current.account_id}"
+  environment {
+    variables = {
+      SLACK_TOKEN_SSM_PARAMETER_NAME = var.slack_token_ssm_parameter_name
+      SNS_TOPIC_ARN                 = aws_sns_topic.quota_notifications.arn
+      DEFAULT_CHANNEL_NAME          = var.slack_channel_name
+      LOG_LEVEL                     = "INFO"
+    }
+  }
+
+  tags = var.tags
+}
+
+data "archive_file" "slack_lambda" {
+  type        = "zip"
+  output_path = "${path.module}/slack-lambda.zip"
+  source {
+    content = <<EOF
+const AWS = require('aws-sdk');
+const https = require('https');
+
+exports.handler = async (event) => {
+    console.log('SNS to Slack Lambda triggered');
+    
+    const ssm = new AWS.SSM();
+    const sns = new AWS.SNS();
+    
+    try {
+        // Get Slack token from SSM
+        const tokenParam = await ssm.getParameter({
+            Name: process.env.SLACK_TOKEN_SSM_PARAMETER_NAME,
+            WithDecryption: true
+        }).promise();
+        
+        const slackToken = tokenParam.Parameter.Value;
+        
+        // Process SNS messages
+        for (const record of event.Records) {
+            const snsMessage = JSON.parse(record.Sns.Message);
+            const channel = process.env.DEFAULT_CHANNEL_NAME;
+            
+            const slackMessage = {
+                channel: channel,
+                text: "Quota Update: " + (snsMessage.message || JSON.stringify(snsMessage))
+            };
+            
+            // Send to Slack
+            await sendToSlack(slackToken, slackMessage);
+        }
+        
+        return { statusCode: 200, body: 'Success' };
+    } catch (error) {
+        console.error('Error:', error);
+        throw error;
+    }
+};
+
+async function sendToSlack(token, message) {
+    return new Promise((resolve, reject) => {
+        const data = JSON.stringify(message);
+        const options = {
+            hostname: 'slack.com',
+            port: 443,
+            path: '/api/chat.postMessage',
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${token}`,
+                'Content-Length': data.length
+            }
+        };
+        
+        const req = https.request(options, (res) => {
+            let body = '';
+            res.on('data', (chunk) => body += chunk);
+            res.on('end', () => resolve(body));
+        });
+        
+        req.on('error', reject);
+        req.write(data);
+        req.end();
+    });
+}
+EOF
+    filename = "index.js"
+  }
+}
+
+resource "aws_iam_role" "slack_lambda_role" {
+  name = "aft-slack-lambda-role-${data.aws_caller_identity.current.account_id}"
   
-  slack_token_ssm_parameter_name = var.slack_token_ssm_parameter_name
-  sns_topic_arn                 = aws_sns_topic.quota_notifications.arn
-  default_channel_name          = var.slack_channel_name
-  lambda_log_level              = "INFO"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+      }
+    ]
+  })
+}
+
+resource "aws_iam_role_policy" "slack_lambda_policy" {
+  name = "aft-slack-lambda-policy-${data.aws_caller_identity.current.account_id}"
+  role = aws_iam_role.slack_lambda_role.id
   
-  additional_tags = var.tags
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ]
+        Resource = "arn:aws:logs:*:*:*"
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "ssm:GetParameter"
+        ]
+        Resource = "arn:aws:ssm:*:*:parameter${var.slack_token_ssm_parameter_name}"
+      }
+    ]
+  })
+}
+
+resource "aws_lambda_permission" "allow_sns" {
+  statement_id  = "AllowExecutionFromSNS"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.sns_to_slack.function_name
+  principal     = "sns.amazonaws.com"
+  source_arn    = aws_sns_topic.quota_notifications.arn
+}
+
+resource "aws_sns_topic_subscription" "slack_lambda_target" {
+  topic_arn = aws_sns_topic.quota_notifications.arn
+  protocol  = "lambda"
+  endpoint  = aws_lambda_function.sns_to_slack.arn
 }
 
 resource "aws_cloudwatch_event_rule" "quota_monitor" {
