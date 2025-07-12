@@ -63,13 +63,6 @@ resource "aws_kms_alias" "lambda_logs" {
   target_key_id = aws_kms_key.lambda_logs.key_id
 }
 
-resource "aws_cloudwatch_log_group" "quota_lambda_logs" {
-  name              = "/aws/lambda/aft-quota-manager-${data.aws_caller_identity.current.account_id}"
-  retention_in_days = 90
-  kms_key_id        = aws_kms_key.lambda_logs.arn
-  tags              = local.common_tags
-}
-
 resource "aws_sns_topic" "quota_notifications" {
   name              = "aft-quota-notifications-${data.aws_caller_identity.current.account_id}-${random_id.lambda_suffix.hex}"
   kms_master_key_id = aws_kms_key.lambda_logs.arn
@@ -111,8 +104,8 @@ module "quota_manager" {
     target_arn = aws_sqs_queue.lambda_dlq.arn
   }
   
-  # Disable permissions boundary
-  permissions_boundary = ""
+  # Try to disable permissions boundary - common parameter names
+  role_permissions_boundary_arn = null
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -180,7 +173,6 @@ module "quota_manager" {
   }
 
   depends_on = [
-    aws_cloudwatch_log_group.quota_lambda_logs,
     aws_sqs_queue.lambda_dlq
   ]
 }
