@@ -100,7 +100,7 @@ module "quota_manager" {
   encrypted_log_group = true
   kms_key_id = aws_kms_key.lambda_logs.arn
   
-  reserved_concurrent_executions = "5"
+  reserved_concurrent_executions = "2"
   
   attach_dead_letter_config = true
   dead_letter_config = {
