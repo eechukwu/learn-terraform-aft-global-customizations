@@ -111,8 +111,8 @@ module "quota_manager" {
     target_arn = aws_sqs_queue.lambda_dlq.arn
   }
   
-  # Disable permissions boundary
-  role_permissions_boundary = ""
+  # Try to disable permissions boundary - common parameter names
+  role_permissions_boundary_arn = null
 
   policy = jsonencode({
     Version = "2012-10-17"
