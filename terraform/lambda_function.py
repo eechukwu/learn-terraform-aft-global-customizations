@@ -21,45 +21,45 @@ def lambda_handler(event, context):
         return {'statusCode': 500, 'body': json.dumps({'error': str(e)})}
 
 def request_quotas():
-    target_regions = os.environ.get('TARGET_REGIONS', '').split(',')
-    quota_config = json.loads(os.environ.get('QUOTA_CONFIG', '{}'))
+    regions = os.environ.get('TARGET_REGIONS', '').split(',')
+    config = json.loads(os.environ.get('QUOTA_CONFIG', '{}'))
     
     results = {}
-    total_requests = 0
+    requests_made = 0
     
-    for region in target_regions:
+    for region in regions:
         region = region.strip()
         if not region:
             continue
             
         results[region] = {}
-        sq_client = boto3.client('service-quotas', region_name=region)
+        sq = boto3.client('service-quotas', region_name=region)
         
-        for quota_name, config in quota_config.items():
+        for quota_name, quota_config in config.items():
             try:
-                current_quota = get_current_quota(sq_client, config['service_code'], config['quota_code'])
+                current = get_current_quota(sq, quota_config['service_code'], quota_config['quota_code'])
                 
-                if current_quota >= config['quota_value']:
+                if current >= quota_config['quota_value']:
                     results[region][quota_name] = {
                         'status': 'already_sufficient',
-                        'current_value': current_quota,
-                        'target_value': config['quota_value']
+                        'current_value': current,
+                        'target_value': quota_config['quota_value']
                     }
                     continue
                 
-                response = sq_client.request_service_quota_increase(
-                    ServiceCode=config['service_code'],
-                    QuotaCode=config['quota_code'],
-                    DesiredValue=config['quota_value']
+                response = sq.request_service_quota_increase(
+                    ServiceCode=quota_config['service_code'],
+                    QuotaCode=quota_config['quota_code'],
+                    DesiredValue=quota_config['quota_value']
                 )
                 
                 results[region][quota_name] = {
                     'status': 'requested',
                     'request_id': response['RequestedQuota']['Id'],
-                    'current_value': current_quota,
-                    'target_value': config['quota_value']
+                    'current_value': current,
+                    'target_value': quota_config['quota_value']
                 }
-                total_requests += 1
+                requests_made += 1
                 
             except Exception as e:
                 logger.error(f"Error with {quota_name} in {region}: {str(e)}")
@@ -68,34 +68,34 @@ def request_quotas():
     return {
         'statusCode': 200,
         'body': json.dumps({
-            'message': f'Processed {total_requests} quota requests',
+            'message': f'Processed {requests_made} quota requests',
             'results': results
         })
     }
 
 def monitor_requests():
-    target_regions = os.environ.get('TARGET_REGIONS', '').split(',')
-    quota_config = json.loads(os.environ.get('QUOTA_CONFIG', '{}'))
+    regions = os.environ.get('TARGET_REGIONS', '').split(',')
+    config = json.loads(os.environ.get('QUOTA_CONFIG', '{}'))
     
     results = {}
-    approved_requests = []
+    approved = []
     
-    for region in target_regions:
+    for region in regions:
         region = region.strip()
         if not region:
             continue
             
         results[region] = {}
-        sq_client = boto3.client('service-quotas', region_name=region)
+        sq = boto3.client('service-quotas', region_name=region)
         
-        for quota_name, config in quota_config.items():
+        for quota_name, quota_config in config.items():
             try:
-                response = sq_client.list_requested_service_quota_change_history(
-                    ServiceCode=config['service_code']
+                response = sq.list_requested_service_quota_change_history(
+                    ServiceCode=quota_config['service_code']
                 )
                 
                 requests = [req for req in response['RequestedQuotas'] 
-                          if req['QuotaCode'] == config['quota_code']]
+                          if req['QuotaCode'] == quota_config['quota_code']]
                 
                 if requests:
                     latest = max(requests, key=lambda x: x['Created'])
@@ -106,7 +106,7 @@ def monitor_requests():
                     }
                     
                     if latest['Status'] == 'APPROVED':
-                        approved_requests.append({
+                        approved.append({
                             'quota': quota_name,
                             'region': region,
                             'old_value': latest['CurrentValue'],
@@ -119,16 +119,15 @@ def monitor_requests():
                 logger.error(f"Error checking {quota_name} in {region}: {str(e)}")
                 results[region][quota_name] = {'status': 'error', 'error': str(e)}
     
-    # Send notification only for approved quotas
-    if approved_requests:
-        send_approval_notification(approved_requests)
+    if approved:
+        send_notification(approved)
     
     return {
         'statusCode': 200,
         'body': json.dumps({
             'message': 'Monitoring complete',
             'results': results,
-            'approved_count': len(approved_requests)
+            'approved_count': len(approved)
         })
     }
 
@@ -142,25 +141,25 @@ def get_current_quota(sq_client, service_code, quota_code):
     except Exception:
         return 0
 
-def send_approval_notification(approved_requests):
-    sns_topic_arn = os.environ.get('SNS_TOPIC_ARN')
-    if not sns_topic_arn:
+def send_notification(approved_requests):
+    sns_topic = os.environ.get('SNS_TOPIC_ARN')
+    if not sns_topic:
         return
     
     try:
-        sns_client = boto3.client('sns')
+        sns = boto3.client('sns')
         
-        message_lines = ["Quota increases approved:"]
+        message = ["Quota increases approved:"]
         for req in approved_requests:
-            message_lines.append(f"• {req['quota']} in {req['region']}: {req['old_value']} → {req['new_value']}")
+            message.append(f"• {req['quota']} in {req['region']}: {req['old_value']} → {req['new_value']}")
         
-        sns_client.publish(
-            TopicArn=sns_topic_arn,
+        sns.publish(
+            TopicArn=sns_topic,
             Subject="AWS Quota Increases Approved",
-            Message="\n".join(message_lines)
+            Message="\n".join(message)
         )
         
-        logger.info(f"Sent approval notification for {len(approved_requests)} quotas")
+        logger.info(f"Sent notification for {len(approved_requests)} quotas")
         
     except Exception as e:
         logger.error(f"Failed to send notification: {str(e)}")

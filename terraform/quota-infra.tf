@@ -1,14 +1,14 @@
-resource "random_id" "lambda_suffix" {
+resource "random_id" "suffix" {
   byte_length = 4
 }
 
-resource "aws_sqs_queue" "lambda_dlq" {
-  name = "aft-quota-lambda-dlq-${data.aws_caller_identity.current.account_id}-${random_id.lambda_suffix.hex}"
+resource "aws_sqs_queue" "dlq" {
+  name = "aft-quota-lambda-dlq-${data.aws_caller_identity.current.account_id}-${random_id.suffix.hex}"
   tags = local.common_tags
 }
 
-resource "aws_kms_key" "lambda_logs" {
-  description             = "KMS key for Lambda quota manager logs"
+resource "aws_kms_key" "logs" {
+  description             = "KMS key for Lambda logs"
   deletion_window_in_days = 7
   enable_key_rotation     = true
 
@@ -58,22 +58,22 @@ resource "aws_kms_key" "lambda_logs" {
   tags = local.common_tags
 }
 
-resource "aws_kms_alias" "lambda_logs" {
-  name          = "alias/aft-quota-manager-logs-${data.aws_caller_identity.current.account_id}-${random_id.lambda_suffix.hex}"
-  target_key_id = aws_kms_key.lambda_logs.key_id
+resource "aws_kms_alias" "logs" {
+  name          = "alias/aft-quota-manager-logs-${data.aws_caller_identity.current.account_id}-${random_id.suffix.hex}"
+  target_key_id = aws_kms_key.logs.key_id
 }
 
-resource "aws_sns_topic" "quota_notifications" {
-  name              = "aft-quota-notifications-${data.aws_caller_identity.current.account_id}-${random_id.lambda_suffix.hex}"
-  kms_master_key_id = aws_kms_key.lambda_logs.arn
+resource "aws_sns_topic" "notifications" {
+  name              = "aft-quota-notifications-${data.aws_caller_identity.current.account_id}-${random_id.suffix.hex}"
+  kms_master_key_id = aws_kms_key.logs.arn
   tags              = local.common_tags
 }
 
-module "sns_to_slack" {
+module "slack" {
   source  = "terraform-aws-modules/notify-slack/aws"
   version = "~> 6.0"
 
-  sns_topic_name    = aws_sns_topic.quota_notifications.name
+  sns_topic_name    = aws_sns_topic.notifications.name
   slack_webhook_url = var.slack_webhook_url
   slack_channel     = var.slack_channel_name
   slack_username    = "AWS-Quota-Manager"
@@ -81,7 +81,7 @@ module "sns_to_slack" {
   tags = local.common_tags
 }
 
-module "quota_manager" {
+module "lambda" {
   source = "github.com/eechukwu/tf-aws-lambda-develop"
 
   function_name = "aft-quota-manager-${data.aws_caller_identity.current.account_id}"
@@ -98,13 +98,11 @@ module "quota_manager" {
   manage_log_group = true
   log_group_retention_days = 365
   encrypted_log_group = true
-  kms_key_id = aws_kms_key.lambda_logs.arn
-  
-
+  kms_key_id = aws_kms_key.logs.arn
   
   attach_dead_letter_config = true
   dead_letter_config = {
-    target_arn = aws_sqs_queue.lambda_dlq.arn
+    target_arn = aws_sqs_queue.dlq.arn
   }
   
   permissions_boundary = ""
@@ -141,14 +139,14 @@ module "quota_manager" {
         Action = [
           "sns:Publish"
         ]
-        Resource = aws_sns_topic.quota_notifications.arn
+        Resource = aws_sns_topic.notifications.arn
       },
       {
         Effect = "Allow"
         Action = [
           "sqs:SendMessage"
         ]
-        Resource = aws_sqs_queue.lambda_dlq.arn
+        Resource = aws_sqs_queue.dlq.arn
       }
     ]
   })
@@ -156,34 +154,34 @@ module "quota_manager" {
   environment = {
     variables = {
       TARGET_REGIONS = join(",", local.target_regions)
-      SNS_TOPIC_ARN = aws_sns_topic.quota_notifications.arn
+      SNS_TOPIC_ARN = aws_sns_topic.notifications.arn
       QUOTA_CONFIG = jsonencode(local.quota_config)
       LOG_LEVEL = "INFO"
     }
   }
 
   depends_on = [
-    aws_sqs_queue.lambda_dlq
+    aws_sqs_queue.dlq
   ]
 }
 
 resource "aws_lambda_alias" "live" {
   name             = "live"
   description      = "Live production alias"
-  function_name    = module.quota_manager.function_name
+  function_name    = module.lambda.function_name
   function_version = "$LATEST"
 }
 
-resource "aws_cloudwatch_event_rule" "quota_monitor" {
-  name                = "aft-quota-monitor-${data.aws_caller_identity.current.account_id}-${random_id.lambda_suffix.hex}"
+resource "aws_cloudwatch_event_rule" "monitor" {
+  name                = "aft-quota-monitor-${data.aws_caller_identity.current.account_id}-${random_id.suffix.hex}"
   description         = "Monitor quota request approvals every 10 minutes"
   schedule_expression = "rate(10 minutes)"
   tags                = local.common_tags
 }
 
-resource "aws_cloudwatch_event_target" "lambda_target" {
-  rule      = aws_cloudwatch_event_rule.quota_monitor.name
-  target_id = "QuotaMonitorTarget-${data.aws_caller_identity.current.account_id}-${random_id.lambda_suffix.hex}"
+resource "aws_cloudwatch_event_target" "lambda" {
+  rule      = aws_cloudwatch_event_rule.monitor.name
+  target_id = "QuotaMonitorTarget-${data.aws_caller_identity.current.account_id}-${random_id.suffix.hex}"
   arn       = aws_lambda_alias.live.arn
   
   input = jsonencode({
@@ -192,11 +190,11 @@ resource "aws_cloudwatch_event_target" "lambda_target" {
   })
 }
 
-resource "aws_lambda_permission" "allow_eventbridge" {
+resource "aws_lambda_permission" "eventbridge" {
   statement_id  = "AllowExecutionFromEventBridge"
   action        = "lambda:InvokeFunction"
-  function_name = module.quota_manager.function_name
+  function_name = module.lambda.function_name
   principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.quota_monitor.arn
+  source_arn    = aws_cloudwatch_event_rule.monitor.arn
   qualifier     = aws_lambda_alias.live.name
 }

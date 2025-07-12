@@ -19,9 +19,8 @@ else
     exit 1
 fi
 
-echo "Cleaning up existing resources if they exist..."
+echo "Cleaning up existing resources..."
 
-# 1. Delete Lambda functions
 LAMBDA_FUNCTIONS=(
     "aft-quota-manager-${ACCOUNT_ID}"
     "notify_slack"
@@ -35,7 +34,6 @@ for fn in "${LAMBDA_FUNCTIONS[@]}"; do
     fi
 done
 
-# 2. Delete IAM roles
 ROLES=(
     "aft-quota-manager-${ACCOUNT_ID}"
     "lambda-notify_slack"
@@ -52,7 +50,6 @@ for role in "${ROLES[@]}"; do
     fi
 done
 
-# 3. Delete IAM policies
 POLICIES=(
     "aft-quota-manager-${ACCOUNT_ID}-logs"
     "aft-quota-manager-${ACCOUNT_ID}-dl"
@@ -69,7 +66,6 @@ for policy in "${POLICIES[@]}"; do
     fi
 done
 
-# 4. Delete SQS queues
 QUEUE_PREFIX="aft-quota-lambda-dlq-${ACCOUNT_ID}"
 for url in $(aws sqs list-queues --query "QueueUrls[]" --output text | tr ' ' '\n' | grep "$QUEUE_PREFIX" 2>/dev/null || echo ""); do
     if [[ -n "$url" ]]; then
@@ -78,7 +74,6 @@ for url in $(aws sqs list-queues --query "QueueUrls[]" --output text | tr ' ' '\
     fi
 done
 
-# 5. Delete SNS topics
 for arn in $(aws sns list-topics --query "Topics[].TopicArn" --output text | tr ' ' '\n' | grep "aft-quota-notifications-${ACCOUNT_ID}" 2>/dev/null || echo ""); do
     if [[ -n "$arn" ]]; then
         echo "Deleting SNS topic: $arn"
@@ -86,7 +81,6 @@ for arn in $(aws sns list-topics --query "Topics[].TopicArn" --output text | tr 
     fi
 done
 
-# 6. Delete KMS aliases & schedule key deletion
 for alias in $(aws kms list-aliases --query "Aliases[].AliasName" --output text | tr ' ' '\n' | grep "alias/aft-quota-manager-logs-${ACCOUNT_ID}" 2>/dev/null || echo ""); do
     if [[ -n "$alias" ]]; then
         key_id=$(aws kms list-aliases --query \
@@ -101,7 +95,6 @@ for alias in $(aws kms list-aliases --query "Aliases[].AliasName" --output text 
     fi
 done
 
-# 7. Delete CloudWatch EventBridge rules
 for rule in $(aws events list-rules --query "Rules[].Name" --output text | tr ' ' '\n' | grep "aft-quota-monitor-${ACCOUNT_ID}" 2>/dev/null || echo ""); do
     if [[ -n "$rule" ]]; then
         echo "Removing targets & deleting EventBridge rule: $rule"
@@ -110,7 +103,6 @@ for rule in $(aws events list-rules --query "Rules[].Name" --output text | tr ' 
     fi
 done
 
-# 8. Delete CloudWatch log groups
 LOG_GROUPS=(
     "/aws/lambda/aft-quota-manager-${ACCOUNT_ID}"
     "/aws/lambda/notify_slack"
@@ -127,7 +119,6 @@ done
 
 echo "Cleanup completed"
 
-# Continue with validation checks
 if ! aws lambda list-functions --max-items 1 >/dev/null 2>&1; then
     echo "ERROR: Lambda permissions missing"
     exit 1

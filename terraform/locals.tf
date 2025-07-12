@@ -12,7 +12,9 @@ locals {
     "us-west-2",
     "eu-west-1",
     "eu-west-2",
-    "ap-southeast-1"
+    "ap-southeast-1",
+    "ap-northeast-1",
+    "sa-east-1"
   ]
   
   # Multiple quota configurations

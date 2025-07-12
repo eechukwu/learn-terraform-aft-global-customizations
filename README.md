@@ -1,40 +1,43 @@
 # AFT Quota Manager
 
-Automatically requests AWS service quota increases when new accounts are created through AFT.
+Automatically requests AWS service quota increases when new accounts are created through AWS Account Factory for Terraform (AFT).
 
-## What This Creates
+## What This Does
 
-- **Lambda Function**: `aft-quota-manager-*` - Handles quota requests and monitoring
-- **SNS Topic**: `aft-quota-notifications-*` - Sends quota notifications
-- **SQS Queue**: `aft-quota-lambda-dlq-*` - Dead letter queue for failed Lambda executions
-- **CloudWatch Events**: Monitors quota request approvals every 10 minutes
-- **IAM Role**: Lambda execution role with Service Quotas permissions
-- **KMS Key**: Encrypts Lambda logs and SNS messages
+When a new AWS account is created via AFT, this solution automatically requests quota increases for common services. It's designed to prevent quota-related issues that can block deployments.
 
-## How It Works
+### Resources Created
+- Lambda function that handles quota requests and monitoring
+- SNS topic for sending notifications to Slack
+- CloudWatch Events rule that checks quota status every 10 minutes
+- IAM roles with minimal permissions for quota management
+- KMS key for encrypting logs and messages
 
-1. **Configuration**: Quota settings are defined in `locals.tf`
-2. **Deployment**: AFT automatically deploys when you commit changes
-3. **Execution**: Lambda reads quota config from environment variables
-4. **Processing**: Requests quota increases for all services across all regions
-5. **Monitoring**: CloudWatch Events check approval status every 10 minutes
-6. **Notifications**: SNS sends alerts when quotas are approved
+## Current Setup
 
-## Supported Quota Types
+### Deployed Resources
+- **Lambda**: `aft-quota-manager-{account-id}` (eu-west-2)
+- **SNS Topic**: For Slack notifications
+- **Monitoring**: Every 10 minutes via CloudWatch Events
 
-1. Security Groups per VPC (200 limit)
-2. IAM Roles per Account (5000 limit)  
-3. IAM Customer Managed Policies per Account (1500 limit)
+### Quota Status
+- **Security Groups**: All regions at 200 (target reached)
+- **Elastic IPs**: Requested 20, pending AWS approval
+
+### Supported Regions
+- us-east-1, us-west-2, eu-west-1, eu-west-2, ap-southeast-1
 
 ## Configuration
 
-Edit `locals.tf` to configure regions and quota services:
+Edit `terraform/locals.tf` to change quota settings:
 
 ```hcl
 target_regions = [
   "us-east-1",
   "us-west-2", 
-  "eu-west-1"
+  "eu-west-1",
+  "eu-west-2",
+  "ap-southeast-1"
 ]
 
 quota_config = {
@@ -45,81 +48,93 @@ quota_config = {
     description  = "Security Groups per VPC"
   }
   
-  iam_roles = {
-    service_code = "iam"
-    quota_code   = "L-FE177D2D"
-    quota_value  = 5000
-    description  = "IAM Roles per account"
-  }
-  
-  iam_policies = {
-    service_code = "iam"
-    quota_code   = "L-0B55BAF2"
-    quota_value  = 1500
-    description  = "IAM Customer managed policies per account"
+  elastic_ips = {
+    service_code = "ec2"
+    quota_code   = "L-0263D0A3"
+    quota_value  = 20
+    description  = "Elastic IP addresses per Region"
   }
 }
 ```
 
-## Adding New Services
+## Adding New Quotas
 
-Add new services to `locals.tf`:
+To add a new quota type, add it to the `quota_config` in `terraform/locals.tf`:
 
 ```hcl
-elastic_ips = {
-  service_code = "ec2"
-  quota_code   = "L-0263D0A3"
-  quota_value  = 10
-  description  = "Elastic IPs per region"
+iam_roles = {
+  service_code = "iam"
+  quota_code   = "L-FE177D2D"
+  quota_value  = 5000
+  description  = "IAM Roles per account"
 }
 ```
 
-## Deployment
+You'll need to find the correct `service_code` and `quota_code` from the AWS Service Quotas console or API.
 
-This is deployed automatically by AFT when you commit changes to the repository.
+## How It Works
+
+1. **Deployment**: AFT automatically deploys when you commit changes
+2. **Initial Request**: Lambda requests quota increases for all configured services
+3. **Monitoring**: CloudWatch Events trigger Lambda every 10 minutes to check status
+4. **Notifications**: When quotas are approved, SNS sends Slack notifications
+5. **Logging**: All activity is logged to CloudWatch
 
 ## Testing
 
-### Pre-deployment checks:
+### Check Current Status
 ```bash
-./api_helpers/pre-api-helpers.sh
+aws lambda invoke --function-name aft-quota-manager-{account-id} \
+  --payload '{"action":"monitor_requests"}' \
+  --cli-binary-format raw-in-base64-out response.json
 ```
 
-### Post-deployment testing (includes automatic monitoring):
+### View Logs
 ```bash
-./api_helpers/post-api-helpers.sh
+aws logs tail /aws/lambda/aft-quota-manager-{account-id} --follow
 ```
 
-### Manual monitoring (optional):
+### Request New Quotas
 ```bash
-./api_helpers/quota-monitor.sh
+aws lambda invoke --function-name aft-quota-manager-{account-id} \
+  --payload '{"action":"request_quotas"}' \
+  --cli-binary-format raw-in-base64-out response.json
 ```
 
-## Slack Integration
+## How It Works
 
-To enable Slack notifications:
-
-1. Create a Slack bot and get the token
-2. Store the token in SSM:
-```bash
-aws ssm put-parameter \
-  --name "/aft/slack/quota-manager-bot-token" \
-  --value "xoxb-your-slack-bot-token" \
-  --type "SecureString" \
-  --overwrite
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   AFT Account   │───▶│  Lambda Function │───▶│  AWS Service    │
+│   Creation      │    │  (Quota Manager) │    │  Quotas API     │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+                              │
+                              ▼
+                       ┌──────────────────┐
+                       │  CloudWatch      │
+                       │  Events (10min)  │
+                       └──────────────────┘
+                              │
+                              ▼
+                       ┌──────────────────┐    ┌─────────────────┐
+                       │  SNS Topic       │───▶│  Slack Channel  │
+                       │  (Notifications) │    │  (#ccoe-notif)  │
+                       └──────────────────┘    └─────────────────┘
 ```
 
 ## Monitoring
 
-- CloudWatch logs: `/aws/lambda/aft-quota-manager-*`
-- SNS topic: `aft-quota-notifications-*`
-- Lambda function: `aft-quota-manager-*`
+The system automatically monitors quota requests every 10 minutes. When a quota is approved, you'll get a Slack notification.
 
-## Cost
+You can also check status manually using the AWS CLI commands above.
 
-This solution uses free AWS services:
-- IAM Roles (always free)
-- IAM Policies (always free)
-- Security Groups (always free)
 
-No additional costs beyond your existing AWS usage. 
+
+## Security
+
+- All Lambda logs are encrypted with KMS
+- SNS messages are encrypted
+- IAM roles use least privilege principle
+- No sensitive data is stored
+
+ 

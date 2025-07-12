@@ -25,10 +25,8 @@ if [ $? -eq 0 ]; then
     echo "Lambda invocation successful"
     
     if command -v jq >/dev/null 2>&1; then
-        # Extract the actual results from the nested JSON
         jq -r '.body | fromjson' "$RESPONSE_FILE" > /tmp/clean_response.json
         
-        # Get services and display results
         SERVICES=$(jq -r '.results | to_entries[0].value | keys[]' /tmp/clean_response.json 2>/dev/null)
         
         if [ -n "$SERVICES" ]; then
@@ -43,7 +41,6 @@ if [ $? -eq 0 ]; then
                     [.key, (.value[$service].current_value // "N/A"), (.value[$service].target_value // "N/A"), (.value[$service].status // "error")] | @tsv
                 ' /tmp/clean_response.json | \
                 while IFS=$'\t' read -r region current target status; do
-                    # Simplify status messages
                     case $status in
                         "already_sufficient") status="OK" ;;
                         "requested") status="REQUESTED" ;;
@@ -52,7 +49,6 @@ if [ $? -eq 0 ]; then
                     printf "%-15s %-10s %-10s %-20s\n" "$region" "$current" "$target" "$status"
                 done
                 
-                # Count regions with target quota
                 TARGET_VALUE=$(jq -r --arg service "$service" '.results | to_entries[0].value[$service].target_value' /tmp/clean_response.json 2>/dev/null)
                 REGION_COUNT=$(jq -r '.results | keys | length' /tmp/clean_response.json)
                 
