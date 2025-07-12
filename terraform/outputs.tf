@@ -14,10 +14,6 @@ output "sns_topic_arn" {
   value = aws_sns_topic.quota_notifications.arn
 }
 
-output "sns_to_slack_function_name" {
-  value = module.sns_to_slack.lambda_function_name
-}
-
 output "sqs_dlq_arn" {
   value = aws_sqs_queue.lambda_dlq.arn
 }
