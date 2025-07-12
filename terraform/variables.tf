@@ -3,12 +3,14 @@ variable "tags" {
   default = {}
 }
 
-variable "slack_token_ssm_parameter_name" {
-  type    = string
-  default = "/aft/quota-manager/slack-token"
+variable "slack_webhook_url" {
+  type        = string
+  description = "Slack webhook URL for notifications"
+  default     = ""
 }
 
 variable "slack_channel_name" {
-  type    = string
-  default = "ccoe-notifications"
+  type        = string
+  description = "Slack channel name for notifications"
+  default     = "ccoe-notifications"
 } 

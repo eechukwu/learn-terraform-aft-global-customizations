@@ -91,18 +91,17 @@ resource "aws_sns_topic" "quota_notifications" {
   tags              = local.common_tags
 }
 
-# SNS to Slack module
+# Official AWS SNS to Slack module
 module "sns_to_slack" {
-  source = "github.com/eechukwu/tf-aws-sns-slack-develop"
+  source  = "terraform-aws-modules/notify-slack/aws"
+  version = "~> 6.0"
 
-  function_name = "aft-quota-slack-notifications-${data.aws_caller_identity.current.account_id}"
-  
-  slack_token_ssm_parameter_name = var.slack_token_ssm_parameter_name
-  sns_topic_arn                 = aws_sns_topic.quota_notifications.arn
-  default_channel_name          = var.slack_channel_name
-  lambda_log_level              = "INFO"
-  
-  additional_tags = local.common_tags
+  sns_topic_name    = aws_sns_topic.quota_notifications.name
+  slack_webhook_url = var.slack_webhook_url
+  slack_channel     = var.slack_channel_name
+  slack_username    = "AWS-Quota-Manager"
+
+  tags = local.common_tags
 }
 
 # Lambda module with full configuration

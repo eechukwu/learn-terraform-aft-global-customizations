@@ -15,7 +15,7 @@ output "sns_topic_arn" {
 }
 
 output "sns_to_slack_function_name" {
-  value = module.sns_to_slack.function_name
+  value = module.sns_to_slack.lambda_function_name
 }
 
 output "sqs_dlq_arn" {
