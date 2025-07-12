@@ -1,6 +1,3 @@
-data "aws_caller_identity" "current" {}
-data "aws_region" "current" {}
-
 resource "random_id" "lambda_suffix" {
   byte_length = 4
 }
