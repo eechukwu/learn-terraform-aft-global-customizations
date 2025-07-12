@@ -16,24 +16,17 @@ locals {
   # Multiple quota configurations
   quota_config = {
     security_groups = {
-      service_code = "ec2"
+      service_code = "vpc"
       quota_code   = "L-0EA8095F"
       quota_value  = 200
       description  = "Security Groups per VPC"
     }
     
-    iam_roles = {
-      service_code = "iam"
-      quota_code   = "L-FE177D2D"
-      quota_value  = 5000
-      description  = "IAM Roles per account"
-    }
-    
-    iam_policies = {
-      service_code = "iam"
-      quota_code   = "L-0B55BAF2"
-      quota_value  = 1500
-      description  = "IAM Customer managed policies per account"
+    elastic_ips = {
+      service_code = "ec2"
+      quota_code   = "L-0263D0A3"
+      quota_value  = 20
+      description  = "Elastic IP addresses per Region"
     }
   }
   
