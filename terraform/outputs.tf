@@ -13,6 +13,7 @@ output "lambda_role_arn" {
   value       = module.lambda.role_arn
 }
 
+# TODO: MONDAY - Update to use company SNS module ARN
 output "sns_topic_arn" {
   description = "ARN of the SNS topic for quota notifications"
   value       = aws_sns_topic.notifications.arn

@@ -63,12 +63,14 @@ resource "aws_kms_alias" "logs" {
   target_key_id = aws_kms_key.logs.key_id
 }
 
+# TODO: MONDAY - Replace with company SNS module
 resource "aws_sns_topic" "notifications" {
   name              = "aft-quota-notifications-${data.aws_caller_identity.current.account_id}-${random_id.suffix.hex}"
   kms_master_key_id = aws_kms_key.logs.arn
   tags              = local.common_tags
 }
 
+# TODO: MONDAY - Replace with company Slack module
 module "slack" {
   source  = "terraform-aws-modules/notify-slack/aws"
   version = "~> 6.0"

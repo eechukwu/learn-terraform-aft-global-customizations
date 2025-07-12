@@ -101,26 +101,31 @@ aws lambda invoke --function-name aft-quota-manager-{account-id} \
   --cli-binary-format raw-in-base64-out response.json
 ```
 
-## How It Works
+## Troubleshooting
 
+### Common Issues
+
+**Lambda Permission Errors**
+```bash
+aws iam get-role --role-name aft-quota-manager-{account-id}
 ```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   AFT Account   │───▶│  Lambda Function │───▶│  AWS Service    │
-│   Creation      │    │  (Quota Manager) │    │  Quotas API     │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-                              │
-                              ▼
-                       ┌──────────────────┐
-                       │  CloudWatch      │
-                       │  Events (10min)  │
-                       └──────────────────┘
-                              │
-                              ▼
-                       ┌──────────────────┐    ┌─────────────────┐
-                       │  SNS Topic       │───▶│  Slack Channel  │
-                       │  (Notifications) │    │  (#ccoe-notif)  │
-                       └──────────────────┘    └─────────────────┘
+
+**SNS Notifications Not Working**
+```bash
+aws sns list-topics --query 'Topics[?contains(TopicArn, `aft-quota-notifications`)].TopicArn' --output text
 ```
+
+**Check Quota Request History**
+```bash
+aws service-quotas list-requested-service-quota-change-history --service-code vpc --region us-east-1
+```
+
+### Debug Steps
+1. Check Lambda function status in AWS Console
+2. Look at CloudWatch logs for errors
+3. Verify IAM permissions are correct
+4. Test SNS topic manually
+5. Check quota request history in Service Quotas console
 
 ## Monitoring
 
@@ -128,7 +133,15 @@ The system automatically monitors quota requests every 10 minutes. When a quota 
 
 You can also check status manually using the AWS CLI commands above.
 
+## Cost
 
+This solution uses mostly free AWS services:
+- Lambda: Free tier covers the usage
+- SNS: Free tier covers notifications
+- CloudWatch Events: Free tier covers monitoring
+- Service Quotas API: Free
+
+Total cost should be minimal, likely under $1/month.
 
 ## Security
 
@@ -136,5 +149,24 @@ You can also check status manually using the AWS CLI commands above.
 - SNS messages are encrypted
 - IAM roles use least privilege principle
 - No sensitive data is stored
+
+## Support
+
+If something breaks:
+1. Check the CloudWatch logs first
+2. Look at the Lambda function code in `terraform/lambda_function.py`
+3. Verify the quota codes are correct
+4. Contact AWS support if needed
+
+The Slack channel #ccoe-notifications will receive notifications when quotas are approved.
+
+## TODO: MONDAY - SNS Module Replacement
+
+The following components need to be updated when replacing with the company SNS module:
+
+1. **terraform/quota-infra.tf**: Replace `aws_sns_topic` and `module "slack"` with company modules
+2. **terraform/lambda_function.py**: Update SNS topic ARN reference
+3. **terraform/outputs.tf**: Update SNS topic ARN output
+4. **Variables**: Update Slack webhook and channel variables to use company configuration
 
  

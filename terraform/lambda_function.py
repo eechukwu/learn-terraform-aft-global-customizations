@@ -141,6 +141,7 @@ def get_current_quota(sq_client, service_code, quota_code):
     except Exception:
         return 0
 
+# TODO: MONDAY - Update SNS topic ARN to use company SNS module
 def send_notification(approved_requests):
     sns_topic = os.environ.get('SNS_TOPIC_ARN')
     if not sns_topic:
