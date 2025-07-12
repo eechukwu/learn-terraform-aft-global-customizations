@@ -19,99 +19,83 @@ aws lambda invoke \
     --qualifier live \
     --payload "$PAYLOAD" \
     --cli-binary-format raw-in-base64-out \
-    "$RESPONSE_FILE"
+    "$RESPONSE_FILE" >/dev/null 2>&1
 
 if [ $? -eq 0 ]; then
     echo "Lambda invocation successful"
-    echo "Response:"
-    cat "$RESPONSE_FILE" | python3 -m json.tool
     
-    echo ""
-    echo "=== QUOTA STATUS MONITORING ==="
-    
-    echo "Checking current quota status..."
-    STATUS_PAYLOAD='{"action":"monitor_requests"}'
-    STATUS_FILE=$(mktemp)
-    
-    aws lambda invoke \
-        --function-name "$LAMBDA_FUNCTION" \
-        --qualifier live \
-        --payload "$STATUS_PAYLOAD" \
-        --cli-binary-format raw-in-base64-out \
-        "$STATUS_FILE"
-    
-    if [ $? -eq 0 ]; then
-        echo "Current quota status:"
-        if command -v jq >/dev/null 2>&1; then
-            # Parse the response from request_quotas action (stored in RESPONSE_FILE)
-            SERVICES=$(jq -r '.results | to_entries[0].value | keys[]' "$RESPONSE_FILE" 2>/dev/null)
-            
+    if command -v jq >/dev/null 2>&1; then
+        # Extract the actual results from the nested JSON
+        jq -r '.body | fromjson' "$RESPONSE_FILE" > /tmp/clean_response.json
+        
+        # Get services and display results
+        SERVICES=$(jq -r '.results | to_entries[0].value | keys[]' /tmp/clean_response.json 2>/dev/null)
+        
+        if [ -n "$SERVICES" ]; then
             for service in $SERVICES; do
                 echo ""
-                echo "=== $service ==="
-                printf "%-20s | %-8s | %-12s | %s\n" "Region" "Current" "Target" "Status"
-                printf "%-20s-+-%-8s-+-%-12s-+-%s\n" "--------------------" "--------" "------------" "----------"
+                echo "=== $(echo $service | tr '_' ' ' | tr '[:lower:]' '[:upper:]') ==="
+                printf "%-15s %-10s %-10s %-20s\n" "Region" "Current" "Target" "Status"
+                printf "%-15s %-10s %-10s %-20s\n" "---------------" "----------" "----------" "--------------------"
                 
                 jq -r --arg service "$service" '
                     .results | to_entries[] | 
-                    [.key, (.value[$service].current_value // "Error"), (.value[$service].target_value // "Error"), (.value[$service].status // "Error")] | @tsv
-                ' "$RESPONSE_FILE" | \
+                    [.key, (.value[$service].current_value // "N/A"), (.value[$service].target_value // "N/A"), (.value[$service].status // "error")] | @tsv
+                ' /tmp/clean_response.json | \
                 while IFS=$'\t' read -r region current target status; do
-                    printf "%-20s | %-8s | %-12s | %s\n" "$region" "$current" "$target" "$status"
+                    # Simplify status messages
+                    case $status in
+                        "already_sufficient") status="OK" ;;
+                        "requested") status="REQUESTED" ;;
+                        "error") status="PENDING_ELSEWHERE" ;;
+                    esac
+                    printf "%-15s %-10s %-10s %-20s\n" "$region" "$current" "$target" "$status"
                 done
                 
-                # Calculate summary for this service
-                REGION_COUNT=$(jq -r '.results | keys | length' "$RESPONSE_FILE")
-                TARGET_VALUE=$(jq -r --arg service "$service" '.results | to_entries[0].value[$service].target_value' "$RESPONSE_FILE" 2>/dev/null || echo "Unknown")
-                
-                SUCCESSFUL_COUNT=$(jq -r --arg service "$service" --arg target "$TARGET_VALUE" '
+                # Count regions with target quota
+                TARGET_VALUE=$(jq -r --arg service "$service" '.results | to_entries[0].value[$service].target_value' /tmp/clean_response.json 2>/dev/null)
+                REGION_COUNT=$(jq -r '.results | keys | length' /tmp/clean_response.json)
+                OK_COUNT=$(jq -r --arg service "$service" --argjson target "$TARGET_VALUE" '
                     .results | to_entries[] | 
-                    select(.value[$service].current_value >= ($target | tonumber))
-                ' "$RESPONSE_FILE" 2>/dev/null | wc -l)
+                    select(.value[$service].current_value >= $target)
+                ' /tmp/clean_response.json 2>/dev/null | wc -l)
                 
-                echo "Summary: $SUCCESSFUL_COUNT/$REGION_COUNT regions have target quota ($TARGET_VALUE)"
+                echo "Summary: $OK_COUNT/$REGION_COUNT regions at target ($TARGET_VALUE)"
             done
             
             echo ""
-            echo "=== OVERALL SUMMARY ==="
-            REGION_COUNT=$(jq -r '.results | keys | length' "$RESPONSE_FILE")
+            echo "=== OVERALL STATUS ==="
+            REGION_COUNT=$(jq -r '.results | keys | length' /tmp/clean_response.json)
             SERVICE_COUNT=$(echo "$SERVICES" | wc -w)
-            TOTAL_SERVICES=$((REGION_COUNT * SERVICE_COUNT))
             
-            # Count successful quotas (current >= target)
-            TOTAL_SUCCESSFUL=$(jq -r '
+            TOTAL_OK=$(jq -r '
                 .results | to_entries[] | .value | to_entries[] | 
                 select(.value.current_value >= .value.target_value)
-            ' "$RESPONSE_FILE" 2>/dev/null | wc -l)
+            ' /tmp/clean_response.json 2>/dev/null | wc -l)
             
-            echo "Total: $TOTAL_SUCCESSFUL/$TOTAL_SERVICES services have target quotas"
-            echo "Regions: $REGION_COUNT, Services: $SERVICE_COUNT"
+            TOTAL_POSSIBLE=$((REGION_COUNT * SERVICE_COUNT))
+            echo "Status: $TOTAL_OK/$TOTAL_POSSIBLE quotas at target across $REGION_COUNT regions"
             
-            # Show request details if available
-            echo ""
-            echo "=== REQUEST DETAILS ==="
-            jq -r '.results | to_entries[] | .value | to_entries[] | 
-                select(.value.status == "requested") | 
-                "\(.key) in \(.value.region // "unknown"): Request ID \(.value.request_id // "unknown")"
-            ' "$RESPONSE_FILE" 2>/dev/null || echo "No pending requests found"
+            PENDING_COUNT=$(jq -r '
+                .results | to_entries[] | .value | to_entries[] | 
+                select(.value.status == "error")
+            ' /tmp/clean_response.json 2>/dev/null | wc -l)
+            
+            if [ "$PENDING_COUNT" -gt 0 ]; then
+                echo "Note: $PENDING_COUNT quotas have requests pending elsewhere"
+            fi
             
         else
-            echo "Status check completed (install jq for formatted output)"
-            cat "$RESPONSE_FILE" | python3 -m json.tool
+            echo "No quota data found"
         fi
+        
+        rm -f /tmp/clean_response.json
+        
     else
-        echo "ERROR: Failed to check quota status"
+        echo "Install jq for formatted output"
+        cat "$RESPONSE_FILE"
     fi
     
-    rm -f "$STATUS_FILE"
-    
-    echo ""
-    echo "=== MONITORING COMMANDS ==="
-    echo "To monitor approval status:"
-    echo "aws lambda invoke --function-name $LAMBDA_FUNCTION --qualifier live --payload '{\"action\":\"monitor_requests\"}' --cli-binary-format raw-in-base64-out response.json"
-    echo ""
-    echo "To view logs:"
-    echo "aws logs tail /aws/lambda/$LAMBDA_FUNCTION --follow"
 else
     echo "Lambda invocation failed"
     exit 1
@@ -119,14 +103,9 @@ fi
 
 rm -f "$RESPONSE_FILE"
 
-SSM_PARAM="/aft/slack/quota-manager-bot-token"
-if aws ssm get-parameter --name "$SSM_PARAM" >/dev/null 2>&1; then
-    PARAM_VALUE=$(aws ssm get-parameter --name "$SSM_PARAM" --with-decryption --query 'Parameter.Value' --output text 2>/dev/null)
-    if [[ "$PARAM_VALUE" == *"dummy-token"* ]]; then
-        echo ""
-        echo "To enable Slack notifications:"
-        echo "aws ssm put-parameter --name '$SSM_PARAM' --value 'xoxb-your-slack-bot-token' --type 'SecureString' --overwrite"
-    fi
-fi
+echo ""
+echo "=== MONITORING ==="
+echo "Check status: aws lambda invoke --function-name $LAMBDA_FUNCTION --payload '{\"action\":\"monitor_requests\"}' --cli-binary-format raw-in-base64-out response.json"
+echo "View logs: aws logs tail /aws/lambda/$LAMBDA_FUNCTION --follow"
 
-echo "Post-API helpers completed" 
+echo "Post-API helpers completed"
