@@ -16,19 +16,37 @@ terraform {
   }
 }
 
-# Simple Lambda function without complex IAM setup
-resource "aws_lambda_function" "quota_manager" {
-  filename         = data.archive_file.lambda_zip.output_path
-  function_name    = "aft-quota-manager-${data.aws_caller_identity.current.account_id}"
-  role            = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/AWSAFTAdmin"
-  handler         = "quota-lambda.lambda_handler"
-  runtime         = "python3.12"
-  timeout         = 300
-  memory_size     = 256
+# SNS Topic for quota notifications
+resource "aws_sns_topic" "quota_notifications" {
+  name = "aft-quota-notifications-${data.aws_caller_identity.current.account_id}"
+  
+  tags = var.tags
+}
 
-  environment {
+# Lambda module with minimal configuration
+module "quota_manager" {
+  source = "github.com/eechukwu/tf-aws-lambda-develop"
+
+  function_name = "aft-quota-manager-${data.aws_caller_identity.current.account_id}"
+  description   = "AFT Quota Manager"
+  handler       = "lambda_function.lambda_handler"
+  runtime       = "python3.12"
+  timeout       = "300"
+  memory_size   = "256"
+  source_path   = "${path.module}"
+
+  tags = var.tags
+
+  # Disable all IAM and log group management
+  attach_policy = false
+  manage_log_group = false
+  
+  reserved_concurrent_executions = "5"
+
+  environment = {
     variables = merge({
       TARGET_REGIONS = join(",", local.target_regions)
+      SNS_TOPIC_ARN = aws_sns_topic.quota_notifications.arn
     }, 
     merge([
       for quota_name, quota_config in local.quota_config : {
@@ -38,16 +56,18 @@ resource "aws_lambda_function" "quota_manager" {
     ]...)
     )
   }
-
-  tags = var.tags
 }
 
-# Archive the Lambda code
-data "archive_file" "lambda_zip" {
-  type        = "zip"
-  output_path = "${path.module}/quota-manager.zip"
-  source {
-    content = file("${path.module}/quota-lambda.py")
-    filename = "quota-lambda.py"
-  }
+# SNS to Slack module
+module "sns_to_slack" {
+  source = "github.com/eechukwu/tf-aws-sns-slack-develop"
+
+  function_name = "aft-quota-slack-notifications-${data.aws_caller_identity.current.account_id}"
+  
+  slack_token_ssm_parameter_name = var.slack_token_ssm_parameter_name
+  sns_topic_arn                 = aws_sns_topic.quota_notifications.arn
+  default_channel_name          = var.slack_channel_name
+  lambda_log_level              = "INFO"
+  
+  additional_tags = var.tags
 } 
