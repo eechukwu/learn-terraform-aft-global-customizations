@@ -47,7 +47,7 @@ if [ $? -eq 0 ]; then
                     case $status in
                         "already_sufficient") status="OK" ;;
                         "requested") status="REQUESTED" ;;
-                        "error") status="PENDING_ELSEWHERE" ;;
+                        "error") status="PENDING_APPROVAL" ;;
                     esac
                     printf "%-15s %-10s %-10s %-20s\n" "$region" "$current" "$target" "$status"
                 done
@@ -55,12 +55,15 @@ if [ $? -eq 0 ]; then
                 # Count regions with target quota
                 TARGET_VALUE=$(jq -r --arg service "$service" '.results | to_entries[0].value[$service].target_value' /tmp/clean_response.json 2>/dev/null)
                 REGION_COUNT=$(jq -r '.results | keys | length' /tmp/clean_response.json)
-                OK_COUNT=$(jq -r --arg service "$service" --argjson target "$TARGET_VALUE" '
-                    .results | to_entries[] | 
-                    select(.value[$service].current_value >= $target)
-                ' /tmp/clean_response.json 2>/dev/null | wc -l)
                 
-                echo "Summary: $OK_COUNT/$REGION_COUNT regions at target ($TARGET_VALUE)"
+                if [ "$TARGET_VALUE" != "null" ] && [ "$TARGET_VALUE" != "" ]; then
+                    OK_COUNT=$(jq -r --arg service "$service" --argjson target "$TARGET_VALUE" '
+                        [.results | to_entries[] | select(.value[$service].current_value >= $target)] | length
+                    ' /tmp/clean_response.json 2>/dev/null)
+                    echo "Summary: $OK_COUNT/$REGION_COUNT regions at target ($TARGET_VALUE)"
+                else
+                    echo "Summary: $REGION_COUNT regions processed (target unknown)"
+                fi
             done
             
             echo ""
@@ -69,20 +72,20 @@ if [ $? -eq 0 ]; then
             SERVICE_COUNT=$(echo "$SERVICES" | wc -w)
             
             TOTAL_OK=$(jq -r '
-                .results | to_entries[] | .value | to_entries[] | 
-                select(.value.current_value >= .value.target_value)
-            ' /tmp/clean_response.json 2>/dev/null | wc -l)
+                [.results | to_entries[] | .value | to_entries[] | 
+                select(.value.current_value != null and .value.target_value != null and .value.current_value >= .value.target_value)] | length
+            ' /tmp/clean_response.json 2>/dev/null)
             
             TOTAL_POSSIBLE=$((REGION_COUNT * SERVICE_COUNT))
             echo "Status: $TOTAL_OK/$TOTAL_POSSIBLE quotas at target across $REGION_COUNT regions"
             
             PENDING_COUNT=$(jq -r '
-                .results | to_entries[] | .value | to_entries[] | 
-                select(.value.status == "error")
-            ' /tmp/clean_response.json 2>/dev/null | wc -l)
+                [.results | to_entries[] | .value | to_entries[] | 
+                select(.value.status == "error")] | length
+            ' /tmp/clean_response.json 2>/dev/null)
             
             if [ "$PENDING_COUNT" -gt 0 ]; then
-                echo "Note: $PENDING_COUNT quotas have requests pending elsewhere"
+                echo "Note: $PENDING_COUNT quotas have requests pending approval"
             fi
             
         else
