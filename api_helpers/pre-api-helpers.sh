@@ -18,11 +18,12 @@ fi
 # Clean up existing resources from failed deployments
 echo "Cleaning up existing resources..."
 
-# Delete existing IAM policies
+# Delete IAM policies
 POLICIES=(
     "aft-quota-manager-${ACCOUNT_ID}-logs"
     "aft-quota-manager-${ACCOUNT_ID}-dl" 
     "aft-quota-manager-${ACCOUNT_ID}"
+    "lambda-notify_slack"
 )
 
 for policy in "${POLICIES[@]}"; do
@@ -32,23 +33,34 @@ for policy in "${POLICIES[@]}"; do
     fi
 done
 
-# Delete existing Lambda function
-LAMBDA_NAME="aft-quota-manager-${ACCOUNT_ID}"
-if aws lambda get-function --function-name "$LAMBDA_NAME" >/dev/null 2>&1; then
-    echo "Deleting Lambda function: $LAMBDA_NAME"
-    aws lambda delete-function --function-name "$LAMBDA_NAME" || echo "Could not delete Lambda"
-fi
+# Delete Lambda functions
+LAMBDA_FUNCTIONS=(
+    "aft-quota-manager-${ACCOUNT_ID}"
+    "notify_slack"
+)
 
-# Delete existing IAM role
-ROLE_NAME="aft-quota-manager-${ACCOUNT_ID}"
-if aws iam get-role --role-name "$ROLE_NAME" >/dev/null 2>&1; then
-    echo "Deleting IAM role: $ROLE_NAME"
-    # Detach policies first
-    aws iam list-attached-role-policies --role-name "$ROLE_NAME" --query 'AttachedPolicies[].PolicyArn' --output text | xargs -r -n1 aws iam detach-role-policy --role-name "$ROLE_NAME" --policy-arn
-    aws iam delete-role --role-name "$ROLE_NAME" || echo "Could not delete role"
-fi
+for lambda in "${LAMBDA_FUNCTIONS[@]}"; do
+    if aws lambda get-function --function-name "$lambda" >/dev/null 2>&1; then
+        echo "Deleting Lambda function: $lambda"
+        aws lambda delete-function --function-name "$lambda" || echo "Could not delete Lambda $lambda"
+    fi
+done
 
-# Delete existing log groups
+# Delete IAM roles
+ROLES=(
+    "aft-quota-manager-${ACCOUNT_ID}"
+    "lambda-notify_slack"
+)
+
+for role in "${ROLES[@]}"; do
+    if aws iam get-role --role-name "$role" >/dev/null 2>&1; then
+        echo "Deleting IAM role: $role"
+        aws iam list-attached-role-policies --role-name "$role" --query 'AttachedPolicies[].PolicyArn' --output text | xargs -r -n1 aws iam detach-role-policy --role-name "$role" --policy-arn
+        aws iam delete-role --role-name "$role" || echo "Could not delete role $role"
+    fi
+done
+
+# Delete log groups
 LOG_GROUPS=(
     "/aws/lambda/aft-quota-manager-${ACCOUNT_ID}"
     "/aws/lambda/notify_slack"
