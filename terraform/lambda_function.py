@@ -33,7 +33,7 @@ def request_quotas():
             continue
             
         results[region] = {}
-        sq_client = boto3.client('servicequotas', region_name=region)
+        sq_client = boto3.client('service-quotas', region_name=region)
         
         for quota_name, config in quota_config.items():
             try:
@@ -86,7 +86,7 @@ def monitor_requests():
             continue
             
         results[region] = {}
-        sq_client = boto3.client('servicequotas', region_name=region)
+        sq_client = boto3.client('service-quotas', region_name=region)
         
         for quota_name, config in quota_config.items():
             try:

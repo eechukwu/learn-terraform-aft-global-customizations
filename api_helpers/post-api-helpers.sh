@@ -30,7 +30,7 @@ if [ $? -eq 0 ]; then
     echo "=== QUOTA STATUS MONITORING ==="
     
     echo "Checking current quota status..."
-    STATUS_PAYLOAD='{"action":"check_status"}'
+    STATUS_PAYLOAD='{"action":"monitor_requests"}'
     STATUS_FILE=$(mktemp)
     
     aws lambda invoke \
