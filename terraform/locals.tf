@@ -16,7 +16,7 @@ locals {
   # Multiple quota configurations
   quota_config = {
     security_groups = {
-      service_code = "vpc"
+      service_code = "ec2"
       quota_code   = "L-0EA8095F"
       quota_value  = 200
       description  = "Security Groups per VPC"
