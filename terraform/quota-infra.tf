@@ -16,16 +16,18 @@ terraform {
   }
 }
 
-# Data source for existing Lambda execution role
-data "aws_iam_role" "lambda_execution" {
-  name = "AWSAFTLambdaExecutionRole"
+# Configure AWS provider to use AFT execution role
+provider "aws" {
+  assume_role {
+    role_arn = var.aft_exec_role_arn
+  }
 }
 
-# Simple Lambda function using existing role
+# Simple Lambda function with IAM role creation
 resource "aws_lambda_function" "quota_manager" {
   filename         = data.archive_file.lambda_zip.output_path
   function_name    = "aft-quota-manager-${data.aws_caller_identity.current.account_id}"
-  role            = data.aws_iam_role.lambda_execution.arn
+  role            = aws_iam_role.lambda_role.arn
   handler         = "lambda_function.lambda_handler"
   runtime         = "python3.12"
   timeout         = 300
@@ -45,6 +47,53 @@ resource "aws_lambda_function" "quota_manager" {
   }
 
   tags = var.tags
+}
+
+# IAM role for Lambda
+resource "aws_iam_role" "lambda_role" {
+  name = "aft-quota-manager-role-${data.aws_caller_identity.current.account_id}"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Action = "sts:AssumeRole"
+        Effect = "Allow"
+        Principal = {
+          Service = "lambda.amazonaws.com"
+        }
+      }
+    ]
+  })
+
+  tags = var.tags
+}
+
+# Basic Lambda execution policy
+resource "aws_iam_role_policy_attachment" "lambda_basic" {
+  role       = aws_iam_role.lambda_role.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+# Service Quotas policy
+resource "aws_iam_role_policy" "service_quotas" {
+  name = "service-quotas-policy"
+  role = aws_iam_role.lambda_role.id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "servicequotas:GetServiceQuota",
+          "servicequotas:RequestServiceQuotaIncrease",
+          "servicequotas:ListRequestedServiceQuotaChangeHistory"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
 }
 
 # Archive the Lambda function
