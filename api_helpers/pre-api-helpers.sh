@@ -17,7 +17,7 @@ fi
 
 echo "Cleaning up existing resources..."
 
-# 1. Delete IAM policies
+# 1. Delete IAM policies (detach then delete)
 POLICIES=(
     "aft-quota-manager-${ACCOUNT_ID}-logs"
     "aft-quota-manager-${ACCOUNT_ID}-dl"
@@ -27,6 +27,27 @@ POLICIES=(
 for policy in "${POLICIES[@]}"; do
     ARN="arn:aws:iam::${ACCOUNT_ID}:policy/${policy}"
     if aws iam get-policy --policy-arn "$ARN" >/dev/null 2>&1; then
+        echo "Processing policy: $policy"
+        # Detach from all entities
+        ENTITIES_JSON=$(aws iam list-entities-for-policy \
+            --policy-arn "$ARN" \
+            --query '{roles:PolicyRoles[].RoleName, users:PolicyUsers[].UserName, groups:PolicyGroups[].GroupName}' \
+            --output json)
+
+        for role in $(jq -r '.roles[]' <<<"$ENTITIES_JSON"); do
+            echo "Detaching $policy from role $role"
+            aws iam detach-role-policy --role-name "$role" --policy-arn "$ARN"
+        done
+        for user in $(jq -r '.users[]' <<<"$ENTITIES_JSON"); do
+            echo "Detaching $policy from user $user"
+            aws iam detach-user-policy --user-name "$user" --policy-arn "$ARN"
+        done
+        for group in $(jq -r '.groups[]' <<<"$ENTITIES_JSON"); do
+            echo "Detaching $policy from group $group"
+            aws iam detach-group-policy --group-name "$group" --policy-arn "$ARN"
+        done
+
+        # Now delete
         echo "Deleting policy: $policy"
         aws iam delete-policy --policy-arn "$ARN" || echo "Could not delete policy $policy"
     fi
