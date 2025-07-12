@@ -127,6 +127,18 @@ module "quota_manager" {
       {
         Effect = "Allow"
         Action = [
+          "iam:CreateServiceLinkedRole"
+        ]
+        Resource = "*"
+        Condition = {
+          StringEquals = {
+            "iam:AWSServiceName" = "servicequotas.amazonaws.com"
+          }
+        }
+      },
+      {
+        Effect = "Allow"
+        Action = [
           "sns:Publish"
         ]
         Resource = aws_sns_topic.quota_notifications.arn
