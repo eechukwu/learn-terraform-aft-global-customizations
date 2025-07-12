@@ -29,14 +29,17 @@ module "quota_manager" {
 
   tags = var.tags
 
-  attach_policy = true
-  policy        = data.aws_iam_policy_document.quota_manager.json
+  # Disable automatic IAM role creation
+  create_role = false
+  lambda_role = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/AWSAFTAdmin"
+  
+  # Disable automatic policy attachment
+  attach_policy = false
   
   reserved_concurrent_executions = "5"
   
-  manage_log_group         = true
-  log_group_retention_days = 365
-  encrypted_log_group      = true
+  # Disable automatic log group management
+  manage_log_group = false
 
   environment = {
     variables = merge({
