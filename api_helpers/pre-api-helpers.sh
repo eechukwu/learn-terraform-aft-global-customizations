@@ -1,7 +1,7 @@
 #!/bin/bash
+
 echo "Executing Pre-API Helpers"
 
-# Check prerequisites
 if ! command -v aws >/dev/null 2>&1; then
     echo "ERROR: AWS CLI not found"
     exit 1
@@ -30,5 +30,20 @@ if ! aws service-quotas list-services --max-items 1 >/dev/null 2>&1; then
 fi
 
 echo "Prerequisites validated successfully"
+
+SSM_PARAMETER_NAME="/aft/slack/quota-manager-bot-token"
+
+if aws ssm get-parameter --name "$SSM_PARAMETER_NAME" --with-decryption >/dev/null 2>&1; then
+    echo "SSM parameter $SSM_PARAMETER_NAME already exists"
+    CURRENT_VALUE=$(aws ssm get-parameter --name "$SSM_PARAMETER_NAME" --with-decryption --query 'Parameter.Value' --output text)
+    if [[ "$CURRENT_VALUE" == *"dummy-token"* ]]; then
+        echo "Parameter contains dummy token - update required for Slack notifications"
+    else
+        echo "Real Slack token detected"
+    fi
+else
+    echo "SSM parameter will be created by Terraform"
+fi
+
 echo "Quota management will be configured for regions defined in locals.tf"
-echo "Pre-API helpers completed successfully"
+echo "Pre-API helpers completed successfully" 

@@ -79,7 +79,7 @@ if [[ $? -eq 0 ]]; then
         printf "%-20s-+-%-8s-+-%s\n" "--------------------" "--------" "----------"
         
         jq -r '.results | to_entries[] | 
-        "\(.key) | \(.value.current_value // "Error") | \(.value.status)"' \
+        "\(.key) | \(.value.current_value // \"Error\") | \(.value.status)"' \
         /tmp/monitor_status.json | \
         while IFS='|' read -r region value status; do
             printf "%-20s | %-8s | %s\n" "$region" "$value" "$status"
@@ -102,4 +102,4 @@ echo "• View logs:      aws logs tail /aws/lambda/$LAMBDA_FUNCTION --follow"
 echo "• Test function:  aws lambda invoke --function-name $LAMBDA_FUNCTION --qualifier live --payload '{\"action\":\"check_status\"}' test.json"
 
 echo
-echo "Monitoring completed"
+echo "Monitoring completed" 

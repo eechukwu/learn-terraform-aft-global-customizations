@@ -1,55 +1,125 @@
-# Learn Terraform - Use Control Tower Account Factory for Terraform
+# AFT Quota Manager
 
-This is a companion repository for the Hashicorp [Provision and Manage Accounts with
-Control Tower Account Factory for Terraform
-tutorial](https://developer.hashicorp.com/terraform/tutorials/aws/aws-control-tower-aft).
+Automatically requests AWS service quota increases when new accounts are created through AFT.
 
-This repository contains boilerplate configuration for defining global
-customizations to use with the Account Factory for Terraform
-module. The README below and the template files in this repository were
-provided by AWS.
+## What This Creates
 
-To create your global customizations, replicate this repository
-and extend the Terraform configuration.
+- **Lambda Function**: `aft-quota-manager-*` - Handles quota requests and monitoring
+- **SNS Topic**: `aft-quota-notifications-*` - Sends quota notifications
+- **SQS Queue**: `aft-quota-lambda-dlq-*` - Dead letter queue for failed Lambda executions
+- **CloudWatch Events**: Monitors quota request approvals every 10 minutes
+- **IAM Role**: Lambda execution role with Service Quotas permissions
+- **KMS Key**: Encrypts Lambda logs and SNS messages
 
-## Introduction
-This repo stores the Terraform and API helpers for the Global Customizations. Global Customizations are used to customize all provisioned accounts with customer defined resources. The resources can be created through Terraform or through Python, leveraging the API helpers. The customization run is parameterized at runtime.
+## How It Works
 
-## Usage
-To leverage Global Customizations, populate this repo as per the instructions below.
+1. **Configuration**: Quota settings are defined in `locals.tf`
+2. **Deployment**: AFT automatically deploys when you commit changes
+3. **Execution**: Lambda reads quota config from environment variables
+4. **Processing**: Requests quota increases for all services across all regions
+5. **Monitoring**: CloudWatch Events check approval status every 10 minutes
+6. **Notifications**: SNS sends alerts when quotas are approved
 
-### Terraform
-AFT provides Jinja templates for Terraform backend and providers. These render at the time Terraform is applied. If needed, additional providers can be defined by creating a providers.tf file.
+## Supported Quota Types
 
-To create Terraform resources, provide your own Terraform files (ex. main.tf, variables.tf, etc) with the resources you would like to create, placing them in the 'terraform' directory.
+1. Security Groups per VPC (200 limit)
+2. IAM Roles per Account (5000 limit)  
+3. IAM Customer Managed Policies per Account (1500 limit)
 
-### API Helpers
-The purpose of API helpers is to perform actions that cannot be performed within Terraform.
+## Configuration
 
-#### Python
-The api_helpers/python folder contains a requirements.txt, where you can specify libraries/packages to be installed via PIP.
+Edit `locals.tf` to configure regions and quota services:
 
-#### Bash
-This is where you define what runs before/after Terraform, as well as the order the Python scripts execute, along with any command line parameters. These bash scripts can be extended to perform other actions, such as leveraging the AWS CLI or performing additional/custom Bash scripting.
+```hcl
+target_regions = [
+  "us-east-1",
+  "us-west-2", 
+  "eu-west-1"
+]
 
-- pre-api-helpers.sh - Actions to execute prior to running Terraform.
-- post-api-helpers.sh - Actions to execute after running Terraform.
-
-#### Sample api-helpers.sh
-
-Sample #1 - Using AWS CLI to query for resources, save to a variable, and then pass to a script. In the example below, all running instances are queried, stopped, and started using AWS CLI and custom Python scritpts.
+quota_config = {
+  security_groups = {
+    service_code = "vpc"
+    quota_code   = "L-0EA8095F"
+    quota_value  = 200
+    description  = "Security Groups per VPC"
+  }
+  
+  iam_roles = {
+    service_code = "iam"
+    quota_code   = "L-FE177D2D"
+    quota_value  = 5000
+    description  = "IAM Roles per account"
+  }
+  
+  iam_policies = {
+    service_code = "iam"
+    quota_code   = "L-0B55BAF2"
+    quota_value  = 1500
+    description  = "IAM Customer managed policies per account"
+  }
+}
 ```
-instances=$(aws ec2 describe-instances --filters "Name=instance-state-name,Values=running")
-python ./python/source/stop_instances.py --instances $instances
-sleep 10s
-python ./python/source/start_instances.py --instances $instances
+
+## Adding New Services
+
+Add new services to `locals.tf`:
+
+```hcl
+elastic_ips = {
+  service_code = "ec2"
+  quota_code   = "L-0263D0A3"
+  quota_value  = 10
+  description  = "Elastic IPs per region"
+}
 ```
 
-Sample #2 - Query a 3rd party IPAM solution, and save the given CIDR to AWS Parameter Store. This SSM parameter could be leveraged from Terraform using a data object to create a VPC.
+## Deployment
+
+This is deployed automatically by AFT when you commit changes to the repository.
+
+## Testing
+
+### Pre-deployment checks:
+```bash
+./api_helpers/pre-api-helpers.sh
 ```
-account = $(aws sts get-caller-identity --query Account --output text)
-region = $(aws ec2 describe-availability-zones --query 'AvailabilityZones[0].[RegionName]' --output text)
-cidr = $(python ./python/source/get_cidr_range.py)
-aws ssm put-parameter --name /$account/$region/vpc/cidr --value $cidr
+
+### Post-deployment testing (includes automatic monitoring):
+```bash
+./api_helpers/post-api-helpers.sh
 ```
-# Force AFT refresh - Thu Jul  3 12:08:32 BST 2025
+
+### Manual monitoring (optional):
+```bash
+./api_helpers/quota-monitor.sh
+```
+
+## Slack Integration
+
+To enable Slack notifications:
+
+1. Create a Slack bot and get the token
+2. Store the token in SSM:
+```bash
+aws ssm put-parameter \
+  --name "/aft/slack/quota-manager-bot-token" \
+  --value "xoxb-your-slack-bot-token" \
+  --type "SecureString" \
+  --overwrite
+```
+
+## Monitoring
+
+- CloudWatch logs: `/aws/lambda/aft-quota-manager-*`
+- SNS topic: `aft-quota-notifications-*`
+- Lambda function: `aft-quota-manager-*`
+
+## Cost
+
+This solution uses free AWS services:
+- IAM Roles (always free)
+- IAM Policies (always free)
+- Security Groups (always free)
+
+No additional costs beyond your existing AWS usage. 

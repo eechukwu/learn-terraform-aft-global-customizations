@@ -1,30 +1,27 @@
-output "lambda_quota_manager" {
-  description = "Lambda function details"
-  value = {
-    function_name = aws_lambda_function.quota_manager.function_name
-    function_arn  = aws_lambda_function.quota_manager.arn
-    log_group     = aws_cloudwatch_log_group.quota_lambda_logs.name
-  }
+output "lambda_function_name" {
+  value = module.quota_manager.function_name
 }
 
-output "quota_management_summary" {
-  description = "Summary of quota management configuration"
-  value = {
-    target_regions = local.target_regions
-    total_regions  = length(local.target_regions)
-    quota_details = {
-      service_code = local.quota_config.service_code
-      quota_code   = local.quota_config.quota_code
-      quota_value  = local.quota_config.quota_value
-    }
-    lambda_function = local.lambda_config.function_name
-  }
+output "lambda_function_arn" {
+  value = module.quota_manager.function_arn
 }
 
-output "operational_commands" {
-  description = "Commands for operational management"
-  value = {
-    check_quotas = "aws lambda invoke --function-name ${aws_lambda_function.quota_manager.function_name} --qualifier live --payload '{\"action\":\"check_status\"}' response.json"
-    view_logs = "aws logs tail /aws/lambda/${aws_lambda_function.quota_manager.function_name} --follow"
-  }
+output "lambda_role_arn" {
+  value = module.quota_manager.role_arn
 }
+
+output "sns_topic_arn" {
+  value = aws_sns_topic.quota_notifications.arn
+}
+
+output "target_regions" {
+  value = local.target_regions
+}
+
+output "quota_config" {
+  value = local.quota_config
+}
+
+output "slack_function_arn" {
+  value = module.sns_to_slack.function_arn
+} 
