@@ -94,17 +94,16 @@ module "quota_manager" {
 
   tags = local.common_tags
 
-  attach_policy = true
-  manage_log_group = false
-  
-  reserved_concurrent_executions = "5"
+  attach_policy     = true
+  manage_log_group  = false
+
+  # removed reserved_concurrent_executions
   
   attach_dead_letter_config = true
   dead_letter_config = {
     target_arn = aws_sqs_queue.lambda_dlq.arn
   }
   
-  # Disable permissions boundary
   permissions_boundary = ""
 
   policy = jsonencode({
@@ -167,8 +166,8 @@ module "quota_manager" {
     variables = {
       TARGET_REGIONS = join(",", local.target_regions)
       SNS_TOPIC_ARN = aws_sns_topic.quota_notifications.arn
-      QUOTA_CONFIG = jsonencode(local.quota_config)
-      LOG_LEVEL = "INFO"
+      QUOTA_CONFIG  = jsonencode(local.quota_config)
+      LOG_LEVEL     = "INFO"
     }
   }
 
@@ -197,7 +196,7 @@ resource "aws_cloudwatch_event_target" "lambda_target" {
   arn       = aws_lambda_alias.live.arn
   
   input = jsonencode({
-    action = "monitor_requests"
+    action  = "monitor_requests"
     regions = local.target_regions
   })
 }
