@@ -110,6 +110,9 @@ module "quota_manager" {
   dead_letter_config = {
     target_arn = aws_sqs_queue.lambda_dlq.arn
   }
+  
+  # Disable permissions boundary
+  role_permissions_boundary = ""
 
   policy = jsonencode({
     Version = "2012-10-17"
