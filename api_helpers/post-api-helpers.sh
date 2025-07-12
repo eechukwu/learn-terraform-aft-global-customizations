@@ -25,8 +25,10 @@ if [ $? -eq 0 ]; then
     echo "Lambda invocation successful"
     
     if command -v jq >/dev/null 2>&1; then
+        # Extract the actual results from the nested JSON
         jq -r '.body | fromjson' "$RESPONSE_FILE" > /tmp/clean_response.json
         
+        # Get services and display results
         SERVICES=$(jq -r '.results | to_entries[0].value | keys[]' /tmp/clean_response.json 2>/dev/null)
         
         if [ -n "$SERVICES" ]; then
@@ -41,6 +43,7 @@ if [ $? -eq 0 ]; then
                     [.key, (.value[$service].current_value // "N/A"), (.value[$service].target_value // "N/A"), (.value[$service].status // "error")] | @tsv
                 ' /tmp/clean_response.json | \
                 while IFS=$'\t' read -r region current target status; do
+                    # Simplify status messages
                     case $status in
                         "already_sufficient") status="OK" ;;
                         "requested") status="REQUESTED" ;;
@@ -49,16 +52,21 @@ if [ $? -eq 0 ]; then
                     printf "%-15s %-10s %-10s %-20s\n" "$region" "$current" "$target" "$status"
                 done
                 
+                # Count regions with target quota
                 TARGET_VALUE=$(jq -r --arg service "$service" '.results | to_entries[0].value[$service].target_value' /tmp/clean_response.json 2>/dev/null)
                 REGION_COUNT=$(jq -r '.results | keys | length' /tmp/clean_response.json)
                 
-                if [ "$TARGET_VALUE" != "null" ] && [ "$TARGET_VALUE" != "" ]; then
+                if [ "$TARGET_VALUE" != "null" ] && [ "$TARGET_VALUE" != "" ] && [ "$TARGET_VALUE" != "N/A" ]; then
                     OK_COUNT=$(jq -r --arg service "$service" --argjson target "$TARGET_VALUE" '
-                        [.results | to_entries[] | select(.value[$service].current_value >= $target)] | length
+                        [.results | to_entries[] | select(.value[$service].current_value != null and .value[$service].current_value != "N/A" and (.value[$service].current_value | tonumber) >= $target)] | length
                     ' /tmp/clean_response.json 2>/dev/null)
                     echo "Summary: $OK_COUNT/$REGION_COUNT regions at target ($TARGET_VALUE)"
                 else
-                    echo "Summary: $REGION_COUNT regions processed (target unknown)"
+                    # For cases where target is null/N/A, count how many have valid current values
+                    VALID_COUNT=$(jq -r --arg service "$service" '
+                        [.results | to_entries[] | select(.value[$service].current_value != null and .value[$service].current_value != "N/A")] | length
+                    ' /tmp/clean_response.json 2>/dev/null)
+                    echo "Summary: $VALID_COUNT/$REGION_COUNT regions processed (target unknown)"
                 fi
             done
             
@@ -69,7 +77,7 @@ if [ $? -eq 0 ]; then
             
             TOTAL_OK=$(jq -r '
                 [.results | to_entries[] | .value | to_entries[] | 
-                select(.value.current_value != null and .value.target_value != null and .value.current_value >= .value.target_value)] | length
+                select(.value.current_value != null and .value.current_value != "N/A" and .value.target_value != null and .value.target_value != "N/A" and (.value.current_value | tonumber) >= (.value.target_value | tonumber))] | length
             ' /tmp/clean_response.json 2>/dev/null)
             
             TOTAL_POSSIBLE=$((REGION_COUNT * SERVICE_COUNT))
@@ -77,7 +85,7 @@ if [ $? -eq 0 ]; then
             
             PENDING_COUNT=$(jq -r '
                 [.results | to_entries[] | .value | to_entries[] | 
-                select(.value.status == "error")] | length
+                select(.value.status == "error" or .value.status == "requested")] | length
             ' /tmp/clean_response.json 2>/dev/null)
             
             if [ "$PENDING_COUNT" -gt 0 ]; then
