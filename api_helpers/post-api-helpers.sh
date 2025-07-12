@@ -43,8 +43,8 @@ if [ $? -eq 0 ]; then
     if [ $? -eq 0 ]; then
         echo "Current quota status:"
         if command -v jq >/dev/null 2>&1; then
-            # Get all services from the first region
-            SERVICES=$(jq -r '.results | to_entries[0].value | keys[]' "$STATUS_FILE" 2>/dev/null)
+            # Parse the response from request_quotas action (stored in RESPONSE_FILE)
+            SERVICES=$(jq -r '.results | to_entries[0].value | keys[]' "$RESPONSE_FILE" 2>/dev/null)
             
             for service in $SERVICES; do
                 echo ""
@@ -55,26 +55,26 @@ if [ $? -eq 0 ]; then
                 jq -r --arg service "$service" '
                     .results | to_entries[] | 
                     [.key, (.value[$service].current_value // "Error"), (.value[$service].target_value // "Error"), (.value[$service].status // "Error")] | @tsv
-                ' "$STATUS_FILE" | \
+                ' "$RESPONSE_FILE" | \
                 while IFS=$'\t' read -r region current target status; do
                     printf "%-20s | %-8s | %-12s | %s\n" "$region" "$current" "$target" "$status"
                 done
                 
                 # Calculate summary for this service
-                REGION_COUNT=$(jq -r '.results | keys | length' "$STATUS_FILE")
-                TARGET_VALUE=$(jq -r --arg service "$service" '.results | to_entries[0].value[$service].target_value' "$STATUS_FILE" 2>/dev/null || echo "Unknown")
+                REGION_COUNT=$(jq -r '.results | keys | length' "$RESPONSE_FILE")
+                TARGET_VALUE=$(jq -r --arg service "$service" '.results | to_entries[0].value[$service].target_value' "$RESPONSE_FILE" 2>/dev/null || echo "Unknown")
                 
                 SUCCESSFUL_COUNT=$(jq -r --arg service "$service" --arg target "$TARGET_VALUE" '
                     .results | to_entries[] | 
                     select(.value[$service].current_value >= ($target | tonumber))
-                ' "$STATUS_FILE" 2>/dev/null | wc -l)
+                ' "$RESPONSE_FILE" 2>/dev/null | wc -l)
                 
                 echo "Summary: $SUCCESSFUL_COUNT/$REGION_COUNT regions have target quota ($TARGET_VALUE)"
             done
             
             echo ""
             echo "=== OVERALL SUMMARY ==="
-            REGION_COUNT=$(jq -r '.results | keys | length' "$STATUS_FILE")
+            REGION_COUNT=$(jq -r '.results | keys | length' "$RESPONSE_FILE")
             SERVICE_COUNT=$(echo "$SERVICES" | wc -w)
             TOTAL_SERVICES=$((REGION_COUNT * SERVICE_COUNT))
             
@@ -82,7 +82,7 @@ if [ $? -eq 0 ]; then
             TOTAL_SUCCESSFUL=$(jq -r '
                 .results | to_entries[] | .value | to_entries[] | 
                 select(.value.current_value >= .value.target_value)
-            ' "$STATUS_FILE" 2>/dev/null | wc -l)
+            ' "$RESPONSE_FILE" 2>/dev/null | wc -l)
             
             echo "Total: $TOTAL_SUCCESSFUL/$TOTAL_SERVICES services have target quotas"
             echo "Regions: $REGION_COUNT, Services: $SERVICE_COUNT"
@@ -93,11 +93,11 @@ if [ $? -eq 0 ]; then
             jq -r '.results | to_entries[] | .value | to_entries[] | 
                 select(.value.status == "requested") | 
                 "\(.key) in \(.value.region // "unknown"): Request ID \(.value.request_id // "unknown")"
-            ' "$STATUS_FILE" 2>/dev/null || echo "No pending requests found"
+            ' "$RESPONSE_FILE" 2>/dev/null || echo "No pending requests found"
             
         else
             echo "Status check completed (install jq for formatted output)"
-            cat "$STATUS_FILE" | python3 -m json.tool
+            cat "$RESPONSE_FILE" | python3 -m json.tool
         fi
     else
         echo "ERROR: Failed to check quota status"
