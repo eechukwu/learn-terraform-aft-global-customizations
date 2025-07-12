@@ -16,18 +16,18 @@ terraform {
   }
 }
 
-# Random suffix for unique resource names
+data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
+
 resource "random_id" "lambda_suffix" {
   byte_length = 4
 }
 
-# SQS Dead Letter Queue for Lambda error handling
 resource "aws_sqs_queue" "lambda_dlq" {
   name = "aft-quota-lambda-dlq-${data.aws_caller_identity.current.account_id}-${random_id.lambda_suffix.hex}"
   tags = local.common_tags
 }
 
-# KMS Key for Lambda logs encryption
 resource "aws_kms_key" "lambda_logs" {
   description             = "KMS key for Lambda quota manager logs"
   deletion_window_in_days = 7
@@ -43,7 +43,7 @@ resource "aws_kms_key" "lambda_logs" {
           AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"
         }
         Action   = "kms:*"
-        Resource = "arn:aws:kms:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:key/*"
+        Resource = "*"
       },
       {
         Sid    = "Allow CloudWatch Logs"
@@ -58,12 +58,20 @@ resource "aws_kms_key" "lambda_logs" {
           "kms:GenerateDataKey*",
           "kms:DescribeKey"
         ]
-        Resource = "arn:aws:kms:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:key/*"
-        Condition = {
-          ArnLike = {
-            "kms:EncryptionContext:aws:logs:arn" = "arn:aws:logs:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:log-group:/aws/lambda/aft-quota-manager-${data.aws_caller_identity.current.account_id}*"
-          }
+        Resource = "*"
+      },
+      {
+        Sid    = "Allow SNS service"
+        Effect = "Allow"
+        Principal = {
+          Service = "sns.amazonaws.com"
         }
+        Action = [
+          "kms:Decrypt",
+          "kms:GenerateDataKey*",
+          "kms:DescribeKey"
+        ]
+        Resource = "*"
       }
     ]
   })
@@ -76,7 +84,6 @@ resource "aws_kms_alias" "lambda_logs" {
   target_key_id = aws_kms_key.lambda_logs.key_id
 }
 
-# CloudWatch Log Group
 resource "aws_cloudwatch_log_group" "quota_lambda_logs" {
   name              = "/aws/lambda/aft-quota-manager-${data.aws_caller_identity.current.account_id}"
   retention_in_days = 90
@@ -84,14 +91,12 @@ resource "aws_cloudwatch_log_group" "quota_lambda_logs" {
   tags              = local.common_tags
 }
 
-# SNS Topic for notifications
 resource "aws_sns_topic" "quota_notifications" {
   name              = "aft-quota-notifications-${data.aws_caller_identity.current.account_id}-${random_id.lambda_suffix.hex}"
   kms_master_key_id = aws_kms_key.lambda_logs.arn
   tags              = local.common_tags
 }
 
-# Official AWS SNS to Slack module
 module "sns_to_slack" {
   source  = "terraform-aws-modules/notify-slack/aws"
   version = "~> 6.0"
@@ -104,7 +109,6 @@ module "sns_to_slack" {
   tags = local.common_tags
 }
 
-# Lambda module with full configuration
 module "quota_manager" {
   source = "github.com/eechukwu/tf-aws-lambda-develop"
 
@@ -118,19 +122,16 @@ module "quota_manager" {
 
   tags = local.common_tags
 
-  # Enable IAM and log group management
   attach_policy = true
   manage_log_group = false
   
   reserved_concurrent_executions = "5"
   
-  # Dead Letter Queue configuration
   attach_dead_letter_config = true
   dead_letter_config = {
     target_arn = aws_sqs_queue.lambda_dlq.arn
   }
 
-  # Service Quotas policy
   policy = jsonencode({
     Version = "2012-10-17"
     Statement = [
@@ -176,26 +177,32 @@ module "quota_manager" {
         Resource = [
           "arn:aws:iam::*:role/aws-service-role/servicequotas.amazonaws.com/*"
         ]
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:SendMessage"
+        ]
+        Resource = aws_sqs_queue.lambda_dlq.arn
       }
     ]
   })
 
   environment = {
-    variables = merge({
+    variables = {
       TARGET_REGIONS = join(",", local.target_regions)
       SNS_TOPIC_ARN = aws_sns_topic.quota_notifications.arn
-    }, 
-    merge([
-      for quota_name, quota_config in local.quota_config : {
-        for key, value in quota_config : 
-        "QUOTA_CONFIG_${upper(replace(quota_name, "-", "_"))}_${upper(key)}" => tostring(value)
-      }
-    ]...)
-    )
+      QUOTA_CONFIG = jsonencode(local.quota_config)
+      LOG_LEVEL = "INFO"
+    }
   }
+
+  depends_on = [
+    aws_cloudwatch_log_group.quota_lambda_logs,
+    aws_sqs_queue.lambda_dlq
+  ]
 }
 
-# Lambda alias for versioning
 resource "aws_lambda_alias" "live" {
   name             = "live"
   description      = "Live production alias"
@@ -203,7 +210,6 @@ resource "aws_lambda_alias" "live" {
   function_version = "$LATEST"
 }
 
-# EventBridge rule for periodic monitoring
 resource "aws_cloudwatch_event_rule" "quota_monitor" {
   name                = "aft-quota-monitor-${data.aws_caller_identity.current.account_id}-${random_id.lambda_suffix.hex}"
   description         = "Monitor quota request approvals every 10 minutes"
@@ -231,7 +237,6 @@ resource "aws_lambda_permission" "allow_eventbridge" {
   qualifier     = aws_lambda_alias.live.name
 }
 
-# CloudWatch alarms for monitoring
 resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
   alarm_name          = "aft-quota-manager-errors-${data.aws_caller_identity.current.account_id}-${random_id.lambda_suffix.hex}"
   comparison_operator = "GreaterThanThreshold"
@@ -270,4 +275,4 @@ resource "aws_cloudwatch_metric_alarm" "lambda_duration" {
   }
 
   tags = local.common_tags
-} 
+}

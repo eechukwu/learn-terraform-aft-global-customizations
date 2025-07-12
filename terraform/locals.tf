@@ -1,10 +1,19 @@
+# Data sources for current AWS account and region
+data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
+
 locals {
+  # Account ID derived from data source
+  account_id = data.aws_caller_identity.current.account_id
+  
+  # Target regions for quota monitoring
   target_regions = [
     "us-east-1",
     "us-west-2",
     "eu-west-1"
   ]
-
+  
+  # Multiple quota configurations
   quota_config = {
     security_groups = {
       service_code = "vpc"
@@ -27,13 +36,18 @@ locals {
       description  = "IAM Customer managed policies per account"
     }
   }
-
+  
+  # Lambda configuration
+  lambda_config = {
+    function_name = "aft-quota-manager-${local.account_id}"
+    timeout      = 900
+    memory_size  = 512
+  }
+  
+  # Common tags for all resources
   common_tags = {
     Environment = "production"
     Project     = "aft-quota-manager"
     ManagedBy   = "terraform"
   }
 }
-
-data "aws_caller_identity" "current" {}
-data "aws_region" "current" {} 
