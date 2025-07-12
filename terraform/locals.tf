@@ -29,4 +29,5 @@ locals {
   }
 }
 
-// Removed duplicate data sources to avoid conflicts with modules 
+data "aws_caller_identity" "current" {}
+data "aws_region" "current" {} 

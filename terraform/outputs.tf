@@ -23,5 +23,5 @@ output "quota_config" {
 }
 
 output "slack_function_arn" {
-  value = module.sns_to_slack.function_arn
+  value = aws_lambda_function.sns_to_slack.arn
 } 
