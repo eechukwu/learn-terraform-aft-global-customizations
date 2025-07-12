@@ -2,272 +2,280 @@ import json
 import boto3
 import os
 import logging
-import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from botocore.config import Config
-from botocore.exceptions import ClientError
 from datetime import datetime
 
+# Configure logging
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-BOTO3_CONFIG = Config(retries={'max_attempts': 5, 'mode': 'adaptive'})
+def lambda_handler(event, context):
+    """
+    AWS Lambda function for managing AWS service quotas
+    """
+    try:
+        action = event.get('action', 'request_quotas')
+        
+        if action == 'request_quotas':
+            return request_quotas()
+        elif action == 'check_status':
+            return check_quota_status()
+        elif action == 'monitor_requests':
+            return monitor_requests()
+        else:
+            return {
+                'statusCode': 400,
+                'body': json.dumps({'error': f'Unknown action: {action}'})
+            }
+            
+    except Exception as e:
+        logger.error(f"Error in lambda_handler: {str(e)}")
+        return {
+            'statusCode': 500,
+            'body': json.dumps({'error': str(e)})
+        }
 
-def get_all_quota_configs_from_env():
-    quota_configs = {}
+def request_quotas():
+    """
+    Request quota increases for configured services
+    """
+    try:
+        # Get configuration from environment variables
+        target_regions = os.environ.get('TARGET_REGIONS', '').split(',')
+        quota_config = parse_quota_config()
+        
+        results = {}
+        total_requests = 0
+        total_errors = 0
+        
+        for region in target_regions:
+            region = region.strip()
+            if not region:
+                continue
+                
+            logger.info(f"Processing region: {region}")
+            results[region] = {}
+            
+            # Create Service Quotas client for this region
+            sq_client = boto3.client('servicequotas', region_name=region)
+            
+            for quota_name, quota_info in quota_config.items():
+                try:
+                    logger.info(f"Requesting quota increase for {quota_name} in {region}")
+                    
+                    # Check current quota
+                    current_quota = get_current_quota(sq_client, quota_info['service_code'], quota_info['quota_code'])
+                    
+                    if current_quota >= quota_info['quota_value']:
+                        logger.info(f"Quota {quota_name} already at or above target value in {region}")
+                        results[region][quota_name] = {
+                            'status': 'already_met',
+                            'current_value': current_quota,
+                            'target_value': quota_info['quota_value']
+                        }
+                        continue
+                    
+                    # Request quota increase
+                    response = sq_client.request_service_quota_increase(
+                        ServiceCode=quota_info['service_code'],
+                        QuotaCode=quota_info['quota_code'],
+                        DesiredValue=quota_info['quota_value']
+                    )
+                    
+                    results[region][quota_name] = {
+                        'status': 'requested',
+                        'request_id': response['RequestedQuota']['Id'],
+                        'current_value': current_quota,
+                        'target_value': quota_info['quota_value'],
+                        'description': quota_info['description']
+                    }
+                    
+                    total_requests += 1
+                    logger.info(f"Quota increase requested for {quota_name} in {region}")
+                    
+                except Exception as e:
+                    logger.error(f"Error requesting quota for {quota_name} in {region}: {str(e)}")
+                    results[region][quota_name] = {
+                        'status': 'error',
+                        'error': str(e)
+                    }
+                    total_errors += 1
+        
+        return {
+            'statusCode': 200,
+            'body': json.dumps({
+                'message': 'Quota requests processed',
+                'results': results,
+                'summary': {
+                    'total_requests': total_requests,
+                    'total_errors': total_errors
+                }
+            })
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in request_quotas: {str(e)}")
+        return {
+            'statusCode': 500,
+            'body': json.dumps({'error': str(e)})
+        }
+
+def check_quota_status():
+    """
+    Check current quota status for all configured services
+    """
+    try:
+        target_regions = os.environ.get('TARGET_REGIONS', '').split(',')
+        quota_config = parse_quota_config()
+        
+        results = {}
+        
+        for region in target_regions:
+            region = region.strip()
+            if not region:
+                continue
+                
+            results[region] = {}
+            sq_client = boto3.client('servicequotas', region_name=region)
+            
+            for quota_name, quota_info in quota_config.items():
+                try:
+                    current_quota = get_current_quota(sq_client, quota_info['service_code'], quota_info['quota_code'])
+                    
+                    results[region][quota_name] = {
+                        'current_value': current_quota,
+                        'target_value': quota_info['quota_value'],
+                        'status': 'met' if current_quota >= quota_info['quota_value'] else 'pending',
+                        'description': quota_info['description']
+                    }
+                    
+                except Exception as e:
+                    logger.error(f"Error checking quota for {quota_name} in {region}: {str(e)}")
+                    results[region][quota_name] = {
+                        'status': 'error',
+                        'error': str(e)
+                    }
+        
+        return {
+            'statusCode': 200,
+            'body': json.dumps({
+                'message': 'Quota status checked',
+                'results': results
+            })
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in check_quota_status: {str(e)}")
+        return {
+            'statusCode': 500,
+            'body': json.dumps({'error': str(e)})
+        }
+
+def monitor_requests():
+    """
+    Monitor pending quota requests
+    """
+    try:
+        target_regions = os.environ.get('TARGET_REGIONS', '').split(',')
+        quota_config = parse_quota_config()
+        
+        results = {}
+        pending_requests = 0
+        
+        for region in target_regions:
+            region = region.strip()
+            if not region:
+                continue
+                
+            results[region] = {}
+            sq_client = boto3.client('servicequotas', region_name=region)
+            
+            for quota_name, quota_info in quota_config.items():
+                try:
+                    # Get request history
+                    response = sq_client.list_requested_service_quota_change_history(
+                        ServiceCode=quota_info['service_code']
+                    )
+                    
+                    # Find the most recent request for this quota
+                    requests = [req for req in response['RequestedQuotas'] 
+                              if req['QuotaCode'] == quota_info['quota_code']]
+                    
+                    if requests:
+                        latest_request = max(requests, key=lambda x: x['Created'])
+                        if latest_request['Status'] == 'PENDING':
+                            pending_requests += 1
+                            
+                        results[region][quota_name] = {
+                            'request_id': latest_request['Id'],
+                            'status': latest_request['Status'],
+                            'current_value': latest_request['CurrentValue'],
+                            'desired_value': latest_request['DesiredValue'],
+                            'created': latest_request['Created'].isoformat(),
+                            'description': quota_info['description']
+                        }
+                    else:
+                        results[region][quota_name] = {
+                            'status': 'no_requests',
+                            'description': quota_info['description']
+                        }
+                        
+                except Exception as e:
+                    logger.error(f"Error monitoring quota for {quota_name} in {region}: {str(e)}")
+                    results[region][quota_name] = {
+                        'status': 'error',
+                        'error': str(e)
+                    }
+        
+        return {
+            'statusCode': 200,
+            'body': json.dumps({
+                'message': 'Quota requests monitored',
+                'results': results,
+                'summary': {
+                    'pending_requests': pending_requests
+                }
+            })
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in monitor_requests: {str(e)}")
+        return {
+            'statusCode': 500,
+            'body': json.dumps({'error': str(e)})
+        }
+
+def parse_quota_config():
+    """
+    Parse quota configuration from environment variables
+    """
+    quota_config = {}
+    
+    # Parse environment variables to build quota configuration
     for key, value in os.environ.items():
         if key.startswith('QUOTA_CONFIG_'):
+            # Parse key like QUOTA_CONFIG_SECURITY_GROUPS_SERVICE_CODE
             parts = key.replace('QUOTA_CONFIG_', '').split('_')
             if len(parts) >= 2:
                 quota_name = '_'.join(parts[:-1]).lower()
-                property_name = parts[-1].lower()
-                if quota_name not in quota_configs:
-                    quota_configs[quota_name] = {}
-                if property_name == 'quota_value':
-                    quota_configs[quota_name][property_name] = int(value)
-                else:
-                    quota_configs[quota_name][property_name] = value
-    return quota_configs
+                config_key = parts[-1].lower()
+                
+                if quota_name not in quota_config:
+                    quota_config[quota_name] = {}
+                
+                quota_config[quota_name][config_key] = value
+    
+    return quota_config
 
-def lambda_handler(event, context):
-    start_time = time.time()
+def get_current_quota(sq_client, service_code, quota_code):
+    """
+    Get current quota value for a service
+    """
     try:
-        regions = event.get('regions', os.environ.get('TARGET_REGIONS', '').split(','))
-        regions = [r.strip() for r in regions if r.strip()]
-        if not regions:
-            logger.warning("No regions configured, using us-east-1 as fallback")
-            regions = ['us-east-1']
-
-        quota_configs = get_all_quota_configs_from_env()
-        if not quota_configs:
-            logger.error("No quota configurations found in environment variables")
-            return {'statusCode': 500, 'error': 'No quota configurations found'}
-
-        action = event.get('action', 'request_quotas')
-        results = {}
-
-        with ThreadPoolExecutor(max_workers=min(len(regions) * len(quota_configs), 20)) as executor:
-            futures = {}
-            for region in regions:
-                for quota_type, config in quota_configs.items():
-                    if action == 'request_quotas':
-                        future = executor.submit(request_quota_increase, config, region)
-                    elif action == 'check_status':
-                        future = executor.submit(check_quota_status, config, region)
-                    elif action == 'monitor_requests':
-                        future = executor.submit(monitor_quota_requests, config, region)
-                    elif action == 'service_status':
-                        future = executor.submit(get_service_status, config, region)
-                    else:
-                        results[(region, quota_type)] = {'status': 'error', 'error': f'Unknown action: {action}'}
-                        continue
-                    futures[future] = (region, quota_type)
-
-            for future in as_completed(futures):
-                region, quota_type = futures[future]
-                try:
-                    results[(region, quota_type)] = future.result(timeout=120)
-                except Exception as e:
-                    results[(region, quota_type)] = {'status': 'error', 'error': str(e), 'region': region, 'quota_type': quota_type}
-
-        summary = build_summary(results, action, regions, quota_configs)
-        if action == 'monitor_requests' and summary.get('all_approved'):
-            send_completion_notification(results, summary)
-
-        output_results = {}
-        for (region, quota_type), value in results.items():
-            if region not in output_results:
-                output_results[region] = {}
-            output_results[region][quota_type] = value
-
-        return {
-            'statusCode': 200,
-            'summary': summary,
-            'results': output_results
-        }
-    except Exception as e:
-        logger.error(f"Lambda handler error: {str(e)}")
-        return {
-            'statusCode': 500,
-            'error': str(e),
-            'execution_time_seconds': round(time.time() - start_time, 2)
-        }
-
-def request_quota_increase(config, region):
-    try:
-        client = boto3.client('service-quotas', region_name=region, config=BOTO3_CONFIG)
-        service_code = config['service_code']
-        quota_code = config['quota_code']
-        quota_value = config['quota_value']
-        current_quota = client.get_service_quota(ServiceCode=service_code, QuotaCode=quota_code)
-        current_value = int(current_quota['Quota']['Value'])
-        if current_value >= quota_value:
-            return {
-                'status': 'already_sufficient',
-                'current_value': current_value,
-                'message': f'Current quota ({current_value}) already meets target ({quota_value})'
-            }
-        try:
-            pending_requests = client.list_requested_service_quota_change_history(
-                ServiceCode=service_code,
-                Status='PENDING'
-            )
-            for request in pending_requests.get('RequestedQuotas', []):
-                if request['QuotaCode'] == quota_code and request['DesiredValue'] >= quota_value:
-                    return {
-                        'status': 'already_pending',
-                        'current_value': current_value,
-                        'requested_value': int(request['DesiredValue']),
-                        'request_id': request['Id'],
-                        'message': f'Quota increase already pending'
-                    }
-        except ClientError:
-            pass
-        response = client.request_service_quota_increase(
-            ServiceCode=service_code,
-            QuotaCode=quota_code,
-            DesiredValue=float(quota_value)
-        )
-        return {
-            'status': 'success',
-            'current_value': current_value,
-            'requested_value': quota_value,
-            'request_id': response['RequestedQuota']['Id'],
-            'message': f'Quota increase requested from {current_value} to {quota_value}'
-        }
-    except ClientError as e:
-        return {
-            'status': 'error',
-            'error': str(e),
-            'error_code': e.response['Error']['Code']
-        }
-    except Exception as e:
-        return {'status': 'error', 'error': str(e)}
-
-def check_quota_status(config, region):
-    try:
-        client = boto3.client('service-quotas', region_name=region, config=BOTO3_CONFIG)
-        service_code = config['service_code']
-        quota_code = config['quota_code']
-        current_quota = client.get_service_quota(ServiceCode=service_code, QuotaCode=quota_code)
-        return {
-            'status': 'success',
-            'current_value': int(current_quota['Quota']['Value']),
-            'quota_name': current_quota['Quota']['QuotaName'],
-            'region': region
-        }
-    except Exception as e:
-        return {'status': 'error', 'error': str(e), 'region': region}
-
-def monitor_quota_requests(config, region):
-    try:
-        client = boto3.client('service-quotas', region_name=region, config=BOTO3_CONFIG)
-        service_code = config['service_code']
-        quota_code = config['quota_code']
-        current_quota = client.get_service_quota(ServiceCode=service_code, QuotaCode=quota_code)
-        current_value = int(current_quota['Quota']['Value'])
-        requests = client.list_requested_service_quota_change_history(
+        response = sq_client.get_service_quota(
             ServiceCode=service_code,
             QuotaCode=quota_code
         )
-        latest_request = None
-        for request in requests.get('RequestedQuotas', []):
-            if not latest_request or request['Created'] > latest_request['Created']:
-                latest_request = request
-        if not latest_request:
-            return {
-                'status': 'no_requests',
-                'current_value': current_value,
-                'message': 'No quota increase requests found',
-                'region': region
-            }
-        return {
-            'status': 'success',
-            'current_value': current_value,
-            'requested_value': int(latest_request['DesiredValue']),
-            'request_id': latest_request['Id'],
-            'request_status': latest_request['Status'],
-            'created': latest_request['Created'].strftime('%Y-%m-%d %H:%M:%S'),
-            'last_updated': latest_request['LastUpdated'].strftime('%Y-%m-%d %H:%M:%S'),
-            'message': f"Request {latest_request['Status']} - Current: {current_value}, Requested: {int(latest_request['DesiredValue'])}",
-            'region': region
-        }
+        return response['Quota']['Value']
     except Exception as e:
-        return {'status': 'error', 'error': str(e), 'region': region}
-
-def get_service_status(config, region):
-    try:
-        client = boto3.client('service-quotas', region_name=region, config=BOTO3_CONFIG)
-        service_code = config['service_code']
-        quota_code = config['quota_code']
-        quota_value = config['quota_value']
-        current_quota = client.get_service_quota(ServiceCode=service_code, QuotaCode=quota_code)
-        current_value = int(current_quota['Quota']['Value'])
-        requests = client.list_requested_service_quota_change_history(
-            ServiceCode=service_code,
-            QuotaCode=quota_code
-        )
-        latest_request = None
-        for request in requests.get('RequestedQuotas', []):
-            if not latest_request or request['Created'] > latest_request['Created']:
-                latest_request = request
-        status = 'sufficient' if current_value >= quota_value else 'insufficient'
-        info = {
-            'service_name': config.get('description', ''),
-            'current_value': current_value,
-            'target_value': quota_value,
-            'status': status
-        }
-        if latest_request:
-            info.update({
-                'has_request': True,
-                'request_id': latest_request['Id'],
-                'request_status': latest_request['Status'],
-                'requested_value': int(latest_request['DesiredValue']),
-                'request_created': latest_request['Created'].strftime('%Y-%m-%d %H:%M:%S'),
-                'request_updated': latest_request['LastUpdated'].strftime('%Y-%m-%d %H:%M:%S')
-            })
-        else:
-            info['has_request'] = False
-        return info
-    except Exception as e:
-        return {'status': 'error', 'error': str(e), 'region': region}
-
-def build_summary(results, action, regions, quota_configs):
-    summary = {}
-    summary['total_regions'] = int(len(regions))
-    exec_time = float(round(time.time() - time.time(), 2))
-    if action == 'monitor_requests':
-        approved = [1 for v in results.values() if v.get('request_status') == 'CASE_CLOSED']
-        pending = [1 for v in results.values() if v.get('request_status') == 'PENDING']
-        summary['approved_regions'] = int(len(approved))
-        summary['pending_regions'] = int(len(pending))
-        summary['all_approved'] = bool(len(pending) == 0 and len(approved) > 0)
-        summary['execution_time_seconds'] = exec_time
-    elif action == 'service_status':
-        summary['execution_time_seconds'] = exec_time
-    else:
-        successful = [1 for v in results.values() if v.get('status') in ['success', 'already_sufficient']]
-        summary['successful_regions'] = int(len(successful))
-        summary['failed_regions'] = int(len(results) - len(successful))
-        summary['success_rate'] = f"{(len(successful)/len(results)*100):.1f}%"
-        summary['execution_time_seconds'] = exec_time
-    return summary
-
-def send_completion_notification(results, summary):
-    try:
-        sns = boto3.client('sns')
-        topic_arn = os.environ.get('SNS_TOPIC_ARN')
-        if not topic_arn:
-            return
-        message = f"Quota Increase Requests Completed\n\nAll quota increase requests have been approved.\n\nSummary:\n- Total Regions: {summary.get('total_regions')}\n- Approved Regions: {summary.get('approved_regions')}\n\nRegional Results:\n"
-        for (region, quota_type), result in results.items():
-            if result.get('status') == 'success':
-                message += f"- {region} ({quota_type}): {result.get('current_value')} -> {result.get('requested_value')} (Approved)\n"
-        sns.publish(
-            TopicArn=topic_arn,
-            Subject="AFT Quota Increases Approved",
-            Message=message
-        )
-    except Exception as e:
-        logger.error(f"Failed to send notification: {str(e)}") 
+        logger.error(f"Error getting current quota: {str(e)}")
+        return 0 
