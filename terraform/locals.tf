@@ -27,6 +27,12 @@ locals {
       description  = "IAM Customer managed policies per account"
     }
   }
+
+  common_tags = {
+    Environment = "production"
+    Project     = "aft-quota-manager"
+    ManagedBy   = "terraform"
+  }
 }
 
 data "aws_caller_identity" "current" {}

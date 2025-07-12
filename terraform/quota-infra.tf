@@ -16,13 +16,6 @@ terraform {
   }
 }
 
-# Configure AWS provider to use AFT execution role
-provider "aws" {
-  assume_role {
-    role_arn = var.aft_exec_role_arn
-  }
-}
-
 # Simple Lambda function with IAM role creation
 resource "aws_lambda_function" "quota_manager" {
   filename         = data.archive_file.lambda_zip.output_path
@@ -46,7 +39,7 @@ resource "aws_lambda_function" "quota_manager" {
     )
   }
 
-  tags = var.tags
+  tags = local.common_tags
 }
 
 # IAM role for Lambda
@@ -66,7 +59,7 @@ resource "aws_iam_role" "lambda_role" {
     ]
   })
 
-  tags = var.tags
+  tags = local.common_tags
 }
 
 # Basic Lambda execution policy
