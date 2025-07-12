@@ -1,20 +1,5 @@
-terraform {
-  required_version = ">= 1.3.0"
-  required_providers {
-    aws = {
-      source  = "hashicorp/aws"
-      version = "~> 5.0"
-    }
-    random = {
-      source  = "hashicorp/random"
-      version = "~> 3.0"
-    }
-    archive = {
-      source  = "hashicorp/archive"
-      version = "~> 2.0"
-    }
-  }
-}
+data "aws_caller_identity" "current" {}
+data "aws_region" "current" {}
 
 resource "random_id" "lambda_suffix" {
   byte_length = 4
@@ -23,8 +8,6 @@ resource "random_id" "lambda_suffix" {
 resource "aws_sqs_queue" "lambda_dlq" {
   name = "aft-quota-lambda-dlq-${data.aws_caller_identity.current.account_id}-${random_id.lambda_suffix.hex}"
   tags = local.common_tags
-  
-  depends_on = [aws_iam_role_policy.aft_quota_management]
 }
 
 resource "aws_kms_key" "lambda_logs" {
@@ -76,8 +59,6 @@ resource "aws_kms_key" "lambda_logs" {
   })
 
   tags = local.common_tags
-  
-  depends_on = [aws_iam_role_policy.aft_quota_management]
 }
 
 resource "aws_kms_alias" "lambda_logs" {
@@ -108,8 +89,6 @@ module "sns_to_slack" {
   slack_username    = "AWS-Quota-Manager"
 
   tags = local.common_tags
-  
-  depends_on = [aws_iam_role_policy.aft_quota_management]
 }
 
 module "quota_manager" {
@@ -218,8 +197,6 @@ resource "aws_cloudwatch_event_rule" "quota_monitor" {
   description         = "Monitor quota request approvals every 10 minutes"
   schedule_expression = "rate(10 minutes)"
   tags                = local.common_tags
-  
-  depends_on = [aws_iam_role_policy.aft_quota_management]
 }
 
 resource "aws_cloudwatch_event_target" "lambda_target" {
