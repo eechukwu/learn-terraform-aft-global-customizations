@@ -69,11 +69,31 @@ resource "aws_sns_topic" "quota_notifications" {
   tags              = local.common_tags
 }
 
+resource "aws_sns_topic" "slack_notifications" {
+  name              = "aft-slack-notifications-${data.aws_caller_identity.current.account_id}-${random_id.lambda_suffix.hex}"
+  kms_master_key_id = aws_kms_key.lambda_logs.arn
+  tags              = local.common_tags
+}
+
+resource "aws_sns_topic_subscription" "quota_to_slack" {
+  topic_arn = aws_sns_topic.quota_notifications.arn
+  protocol  = "lambda"
+  endpoint  = module.sns_to_slack.lambda_function_arn
+}
+
+resource "aws_lambda_permission" "allow_sns_slack" {
+  statement_id  = "AllowExecutionFromSNS"
+  action        = "lambda:InvokeFunction"
+  function_name = module.sns_to_slack.lambda_function_name
+  principal     = "sns.amazonaws.com"
+  source_arn    = aws_sns_topic.quota_notifications.arn
+}
+
 module "sns_to_slack" {
   source  = "terraform-aws-modules/notify-slack/aws"
   version = "~> 6.0"
 
-  sns_topic_name    = aws_sns_topic.quota_notifications.name
+  sns_topic_name    = aws_sns_topic.slack_notifications.name
   slack_webhook_url = var.slack_webhook_url
   slack_channel     = var.slack_channel_name
   slack_username    = "AWS-Quota-Manager"
@@ -94,10 +114,13 @@ module "quota_manager" {
 
   tags = local.common_tags
 
-  attach_policy     = true
-  manage_log_group  = false
-
-  # removed reserved_concurrent_executions
+  attach_policy = true
+  manage_log_group = true
+  log_group_retention_days = 365
+  encrypted_log_group = true
+  kms_key_id = aws_kms_key.lambda_logs.arn
+  
+  reserved_concurrent_executions = "5"
   
   attach_dead_letter_config = true
   dead_letter_config = {
@@ -131,30 +154,6 @@ module "quota_manager" {
       {
         Effect = "Allow"
         Action = [
-          "iam:CreateServiceLinkedRole"
-        ]
-        Resource = [
-          "arn:aws:iam::*:role/aws-service-role/servicequotas.amazonaws.com/*"
-        ]
-        Condition = {
-          StringEquals = {
-            "iam:AWSServiceName" = "servicequotas.amazonaws.com"
-          }
-        }
-      },
-      {
-        Effect = "Allow"
-        Action = [
-          "iam:AttachRolePolicy",
-          "iam:PutRolePolicy"
-        ]
-        Resource = [
-          "arn:aws:iam::*:role/aws-service-role/servicequotas.amazonaws.com/*"
-        ]
-      },
-      {
-        Effect = "Allow"
-        Action = [
           "sqs:SendMessage"
         ]
         Resource = aws_sqs_queue.lambda_dlq.arn
@@ -166,8 +165,8 @@ module "quota_manager" {
     variables = {
       TARGET_REGIONS = join(",", local.target_regions)
       SNS_TOPIC_ARN = aws_sns_topic.quota_notifications.arn
-      QUOTA_CONFIG  = jsonencode(local.quota_config)
-      LOG_LEVEL     = "INFO"
+      QUOTA_CONFIG = jsonencode(local.quota_config)
+      LOG_LEVEL = "INFO"
     }
   }
 
@@ -196,7 +195,7 @@ resource "aws_cloudwatch_event_target" "lambda_target" {
   arn       = aws_lambda_alias.live.arn
   
   input = jsonencode({
-    action  = "monitor_requests"
+    action = "monitor_requests"
     regions = local.target_regions
   })
 }
@@ -208,44 +207,4 @@ resource "aws_lambda_permission" "allow_eventbridge" {
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.quota_monitor.arn
   qualifier     = aws_lambda_alias.live.name
-}
-
-resource "aws_cloudwatch_metric_alarm" "lambda_errors" {
-  alarm_name          = "aft-quota-manager-errors-${data.aws_caller_identity.current.account_id}-${random_id.lambda_suffix.hex}"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = "2"
-  metric_name         = "Errors"
-  namespace           = "AWS/Lambda"
-  period              = "300"
-  statistic           = "Sum"
-  threshold           = "0"
-  alarm_description   = "Lambda error monitoring"
-  alarm_actions       = [aws_sns_topic.quota_notifications.arn]
-  ok_actions          = [aws_sns_topic.quota_notifications.arn]
-
-  dimensions = {
-    FunctionName = module.quota_manager.function_name
-  }
-
-  tags = local.common_tags
-}
-
-resource "aws_cloudwatch_metric_alarm" "lambda_duration" {
-  alarm_name          = "aft-quota-manager-duration-${data.aws_caller_identity.current.account_id}-${random_id.lambda_suffix.hex}"
-  comparison_operator = "GreaterThanThreshold"
-  evaluation_periods  = "2"
-  metric_name         = "Duration"
-  namespace           = "AWS/Lambda"
-  period              = "300"
-  statistic           = "Average"
-  threshold           = "600000"
-  alarm_description   = "Lambda duration monitoring"
-  alarm_actions       = [aws_sns_topic.quota_notifications.arn]
-  ok_actions          = [aws_sns_topic.quota_notifications.arn]
-
-  dimensions = {
-    FunctionName = module.quota_manager.function_name
-  }
-
-  tags = local.common_tags
 }
