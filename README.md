@@ -1,65 +1,43 @@
 # AFT Quota Manager
 
-Automatically requests AWS service quota increases when new accounts are created through AWS Account Factory for Terraform (AFT).
+Automatically requests AWS service quota increases when new accounts are created through AFT.
 
 ## What This Does
 
-When a new AWS account is created via AFT, this solution automatically requests quota increases for common services. It's designed to prevent quota-related issues that can block deployments.
-
-### Resources Created
-- Lambda function that handles quota requests and monitoring
-- SNS topic for sending notifications to Slack
-- CloudWatch Events rule that checks quota status every 10 minutes
-- IAM roles with minimal permissions for quota management
-- KMS key for encrypting logs and messages
+When AFT creates a new AWS account, this system automatically requests quota increases for common services like Security Groups, Elastic IPs, IAM Roles, Lambda Functions, VPC Peering connections, and more. This prevents quota-related deployment issues and ensures your applications can scale properly from day one.
 
 ## Current Setup
 
-### Deployed Resources
-- **Lambda**: `aft-quota-manager-{account-id}` (eu-west-2)
-- **SNS Topic**: For Slack notifications
-- **Monitoring**: Every 10 minutes via CloudWatch Events
+### Resources
+- Lambda function handles quota requests and monitoring
+- SNS notifications to Slack via company modules
+- CloudWatch Events checks quota status every 10 minutes
+- Encrypted logs and DLQ for error handling
 
-### Quota Status
-- **Security Groups**: All regions at 200 (target reached)
-- **Elastic IPs**: Requested 20, pending AWS approval
+### Quotas Being Managed
+- **Security Groups**: Increased to 200 per VPC
+- **Elastic IPs**: Increased to 20 per region
 
-### Supported Regions
-- us-east-1, us-west-2, eu-west-1, eu-west-2, ap-southeast-1
+### Regions Covered
+- us-east-1
+- us-west-2
+- eu-west-1
+- eu-west-2
+- ap-southeast-1
 
-## Configuration
+*Additional regions can be added by editing the `target_regions` list in `terraform/locals.tf`*
 
-Edit `terraform/locals.tf` to change quota settings:
+## How It Works
 
-```hcl
-target_regions = [
-  "us-east-1",
-  "us-west-2", 
-  "eu-west-1",
-  "eu-west-2",
-  "ap-southeast-1"
-]
-
-quota_config = {
-  security_groups = {
-    service_code = "vpc"
-    quota_code   = "L-0EA8095F"
-    quota_value  = 200
-    description  = "Security Groups per VPC"
-  }
-  
-  elastic_ips = {
-    service_code = "ec2"
-    quota_code   = "L-0263D0A3"
-    quota_value  = 20
-    description  = "Elastic IP addresses per Region"
-  }
-}
-```
+1. AFT deploys this when you commit changes
+2. Lambda immediately requests quota increases for all regions
+3. System checks every 10 minutes if quotas are approved
+4. Slack notifications sent when quotas are approved
+5. Everything logged to CloudWatch
 
 ## Adding New Quotas
 
-To add a new quota type, add it to the `quota_config` in `terraform/locals.tf`:
+Edit `terraform/locals.tf` and add to the `quota_config`:
 
 ```hcl
 iam_roles = {
@@ -70,103 +48,49 @@ iam_roles = {
 }
 ```
 
-You'll need to find the correct `service_code` and `quota_code` from the AWS Service Quotas console or API.
+Find quota codes in the AWS Service Quotas console.
 
-## How It Works
+## Configuration
 
-1. **Deployment**: AFT automatically deploys when you commit changes
-2. **Initial Request**: Lambda requests quota increases for all configured services
-3. **Monitoring**: CloudWatch Events trigger Lambda every 10 minutes to check status
-4. **Notifications**: When quotas are approved, SNS sends Slack notifications
-5. **Logging**: All activity is logged to CloudWatch
+The main settings are in `terraform/locals.tf`:
 
-## Testing
+- `target_regions` - which regions to monitor
+- `quota_config` - which quotas to request
+- `common_tags` - tags applied to all resources
 
-### Check Current Status
-```bash
-aws lambda invoke --function-name aft-quota-manager-{account-id} \
-  --payload '{"action":"monitor_requests"}' \
-  --cli-binary-format raw-in-base64-out response.json
+Slack notifications are configured in `terraform/variables.tf`:
+
+- `slack_channel_name` - where notifications go
+- `cloud_services_slack_topic_arn` - company Slack topic
+
+## File Structure
+
 ```
-
-### View Logs
-```bash
-aws logs tail /aws/lambda/aft-quota-manager-{account-id} --follow
+├── api_helpers/
+│   ├── pre-api-helpers.sh    # Environment validation
+│   ├── post-api-helpers.sh   # Deployment testing
+│   └── python/requirements.txt
+└── terraform/
+    ├── quota-infra.tf        # Main infrastructure
+    ├── lambda_function.py    # Quota management logic
+    ├── locals.tf             # Configuration settings
+    ├── variables.tf          # Input variables
+    ├── outputs.tf            # Resource outputs
+    └── providers.tf.jinja    # AFT provider config
 ```
-
-### Request New Quotas
-```bash
-aws lambda invoke --function-name aft-quota-manager-{account-id} \
-  --payload '{"action":"request_quotas"}' \
-  --cli-binary-format raw-in-base64-out response.json
-```
-
-## Troubleshooting
-
-### Common Issues
-
-**Lambda Permission Errors**
-```bash
-aws iam get-role --role-name aft-quota-manager-{account-id}
-```
-
-**SNS Notifications Not Working**
-```bash
-aws sns list-topics --query 'Topics[?contains(TopicArn, `aft-quota-notifications`)].TopicArn' --output text
-```
-
-**Check Quota Request History**
-```bash
-aws service-quotas list-requested-service-quota-change-history --service-code vpc --region us-east-1
-```
-
-### Debug Steps
-1. Check Lambda function status in AWS Console
-2. Look at CloudWatch logs for errors
-3. Verify IAM permissions are correct
-4. Test SNS topic manually
-5. Check quota request history in Service Quotas console
 
 ## Monitoring
 
-The system automatically monitors quota requests every 10 minutes. When a quota is approved, you'll get a Slack notification.
+The system runs automatically every 10 minutes. When quotas are approved, you'll get notifications in #ccoe-notifications.
 
-You can also check status manually using the AWS CLI commands above.
+Post-deployment, the script shows a summary like:
+```
+=== SECURITY GROUPS ===
+Region          Current    Target     Status
+us-east-1       200        200        OK
+us-west-2       200        200        OK
+Summary: 5/5 regions at target (200)
 
-## Cost
-
-This solution uses mostly free AWS services:
-- Lambda: Free tier covers the usage
-- SNS: Free tier covers notifications
-- CloudWatch Events: Free tier covers monitoring
-- Service Quotas API: Free
-
-Total cost should be minimal, likely under $1/month.
-
-## Security
-
-- All Lambda logs are encrypted with KMS
-- SNS messages are encrypted
-- IAM roles use least privilege principle
-- No sensitive data is stored
-
-## Support
-
-If something breaks:
-1. Check the CloudWatch logs first
-2. Look at the Lambda function code in `terraform/lambda_function.py`
-3. Verify the quota codes are correct
-4. Contact AWS support if needed
-
-The Slack channel #ccoe-notifications will receive notifications when quotas are approved.
-
-## TODO: MONDAY - SNS Module Replacement
-
-The following components need to be updated when replacing with the company SNS module:
-
-1. **terraform/quota-infra.tf**: Replace `aws_sns_topic` and `module "slack"` with company modules
-2. **terraform/lambda_function.py**: Update SNS topic ARN reference
-3. **terraform/outputs.tf**: Update SNS topic ARN output
-4. **Variables**: Update Slack webhook and channel variables to use company configuration
-
- 
+=== OVERALL STATUS ===
+Status: 5/10 quotas at target across 5 regions
+```

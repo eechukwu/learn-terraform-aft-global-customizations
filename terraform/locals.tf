@@ -12,9 +12,7 @@ locals {
     "us-west-2",
     "eu-west-1",
     "eu-west-2",
-    "ap-southeast-1",
-    "ap-northeast-1",
-    "sa-east-1"
+    "ap-southeast-1"
   ]
   
   # Multiple quota configurations
@@ -42,9 +40,9 @@ locals {
   }
   
   # Common tags for all resources
-  common_tags = {
+  common_tags = merge(var.additional_tags, {
     Environment = "production"
     Project     = "aft-quota-manager"
     ManagedBy   = "terraform"
-  }
+  })
 }

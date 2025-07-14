@@ -3,8 +3,12 @@ resource "random_id" "suffix" {
 }
 
 resource "aws_sqs_queue" "dlq" {
-  name = "aft-quota-lambda-dlq-${data.aws_caller_identity.current.account_id}-${random_id.suffix.hex}"
-  tags = local.common_tags
+  name              = "aft-quota-lambda-dlq-${data.aws_caller_identity.current.account_id}-${random_id.suffix.hex}"
+  kms_master_key_id = aws_kms_key.logs.arn
+  tags              = merge(local.common_tags, {
+    "williamhill:role" = "quota-manager-dlq"
+    "williamhill:type" = "wh-infra"
+  })
 }
 
 resource "aws_kms_key" "logs" {
@@ -55,7 +59,10 @@ resource "aws_kms_key" "logs" {
     ]
   })
 
-  tags = local.common_tags
+  tags = merge(local.common_tags, {
+    "williamhill:role" = "quota-manager-kms"
+    "williamhill:type" = "wh-infra"
+  })
 }
 
 resource "aws_kms_alias" "logs" {
@@ -63,40 +70,45 @@ resource "aws_kms_alias" "logs" {
   target_key_id = aws_kms_key.logs.key_id
 }
 
-# TODO: MONDAY - Replace with company SNS module
-resource "aws_sns_topic" "notifications" {
-  name              = "aft-quota-notifications-${data.aws_caller_identity.current.account_id}-${random_id.suffix.hex}"
-  kms_master_key_id = aws_kms_key.logs.arn
-  tags              = local.common_tags
+module "quota_notifications" {
+  source = "git::https://gitlab.com/williamhillplc/technical-services/public-cloud/terraform-modules/tf-aws-notifications.git?ref=5.2.0"
+  name = "aft-quota-manager-${data.aws_caller_identity.current.account_id}-notifications"
+  additional_tags = merge(local.common_tags, {
+    "williamhill:role" = "quota-manager"
+    "williamhill:type" = "wh-infra"
+  })
 }
 
-# TODO: MONDAY - Replace with company Slack module
-module "slack" {
-  source  = "terraform-aws-modules/notify-slack/aws"
-  version = "~> 6.0"
-
-  sns_topic_name    = aws_sns_topic.notifications.name
-  slack_webhook_url = var.slack_webhook_url
-  slack_channel     = var.slack_channel_name
-  slack_username    = "AWS-Quota-Manager"
-
-  tags = local.common_tags
+module "quota_notifications_to_slack" {
+  source = "git::https://gitlab.com/williamhillplc/technical-services/public-cloud/terraform-modules/tf-aws-sns-slack-consumer.git?ref=6.0.0"
+  source_sns_topic_arn    = module.quota_notifications.sns_topic_arn
+  target_sns_topic_arn    = var.cloud_services_slack_topic_arn
+  target_sns_topic_region = var.slack_notification_region
+  slack_channel           = var.slack_channel_name
+  additional_tags = merge(local.common_tags, {
+    "williamhill:role" = "quota-manager-slack"
+    "williamhill:type" = "wh-infra"
+  })
 }
 
 module "lambda" {
-  source = "github.com/eechukwu/tf-aws-lambda-develop"
+  source = "git::https://gitlab.com/williamhillplc/technical-services/public-cloud/terraform-modules/tf-aws-lambda?ref=9.3.0"
 
   function_name = "aft-quota-manager-${data.aws_caller_identity.current.account_id}"
-  description   = "AFT Quota Manager"
+  description   = "Manages AWS service quotas automatically across multiple regions."
   handler       = "lambda_function.lambda_handler"
   runtime       = "python3.12"
   timeout       = "300"
   memory_size   = "256"
   source_path   = "${path.module}"
 
-  tags = local.common_tags
+  tags = merge(local.common_tags, {
+    "williamhill:role" = "quota-manager-lambda"
+    "williamhill:type" = "wh-infra"
+  })
 
   attach_policy = true
+  enabled       = true
   manage_log_group = true
   log_group_retention_days = 365
   encrypted_log_group = true
@@ -106,8 +118,6 @@ module "lambda" {
   dead_letter_config = {
     target_arn = aws_sqs_queue.dlq.arn
   }
-  
-  permissions_boundary = ""
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -141,7 +151,7 @@ module "lambda" {
         Action = [
           "sns:Publish"
         ]
-        Resource = aws_sns_topic.notifications.arn
+        Resource = module.quota_notifications.sns_topic_arn
       },
       {
         Effect = "Allow"
@@ -156,15 +166,11 @@ module "lambda" {
   environment = {
     variables = {
       TARGET_REGIONS = join(",", local.target_regions)
-      SNS_TOPIC_ARN = aws_sns_topic.notifications.arn
+      SNS_TOPIC_ARN = module.quota_notifications.sns_topic_arn
       QUOTA_CONFIG = jsonencode(local.quota_config)
       LOG_LEVEL = "INFO"
     }
   }
-
-  depends_on = [
-    aws_sqs_queue.dlq
-  ]
 }
 
 resource "aws_lambda_alias" "live" {
@@ -178,7 +184,10 @@ resource "aws_cloudwatch_event_rule" "monitor" {
   name                = "aft-quota-monitor-${data.aws_caller_identity.current.account_id}-${random_id.suffix.hex}"
   description         = "Monitor quota request approvals every 10 minutes"
   schedule_expression = "rate(10 minutes)"
-  tags                = local.common_tags
+  tags                = merge(local.common_tags, {
+    "williamhill:role" = "quota-manager-scheduler"
+    "williamhill:type" = "wh-infra"
+  })
 }
 
 resource "aws_cloudwatch_event_target" "lambda" {
